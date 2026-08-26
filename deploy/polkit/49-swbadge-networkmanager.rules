@@ -1,0 +1,17 @@
+// Permit only the dedicated LightDM greeter account to prepare networking
+// before an AD login. NetworkManager remains responsible for secret storage.
+polkit.addRule(function(action, subject) {
+    if (subject.user !== "lightdm") {
+        return polkit.Result.NOT_HANDLED;
+    }
+
+    var allowed = [
+        "org.freedesktop.NetworkManager.network-control",
+        "org.freedesktop.NetworkManager.enable-disable-wifi",
+        "org.freedesktop.NetworkManager.settings.modify.system"
+    ];
+    if (allowed.indexOf(action.id) !== -1) {
+        return polkit.Result.YES;
+    }
+    return polkit.Result.NOT_HANDLED;
+});

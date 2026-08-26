@@ -1,0 +1,15 @@
+[ req ]
+distinguished_name = dn
+x509_extensions = v3_ca
+prompt = no
+
+[ dn ]
+O = StumpfWorks
+OU = Badge Login PKINIT
+CN = StumpfWorks Badge PKINIT CA
+
+[ v3_ca ]
+basicConstraints = critical,CA:true,pathlen:0
+keyUsage = critical,keyCertSign,cRLSign
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always

@@ -1,0 +1,10 @@
+[Unit]
+Description=StumpfWorks Badge Agent
+After=network-online.target
+[Service]
+Type=simple
+ExecStart=/opt/stumpfworks-badge/sw-badge-agent --server http://127.0.0.1:8080 --client-id terminal01
+Restart=on-failure
+NoNewPrivileges=true
+[Install]
+WantedBy=multi-user.target

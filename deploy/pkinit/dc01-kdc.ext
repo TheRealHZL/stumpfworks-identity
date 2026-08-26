@@ -1,0 +1,18 @@
+basicConstraints = critical,CA:false
+keyUsage = critical,digitalSignature,keyEncipherment
+extendedKeyUsage = 1.3.6.1.5.2.3.5
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid,issuer
+subjectAltName = DNS:dc01.example.test,otherName:1.3.6.1.5.2.2;SEQUENCE:pkinit_principal
+
+[pkinit_principal]
+realm = EXP:0,GeneralString:EXAMPLE.TEST
+principal_name = EXP:1,SEQUENCE:principal_name
+
+[principal_name]
+name_type = EXP:0,INTEGER:2
+name_string = EXP:1,SEQUENCE:principal_components
+
+[principal_components]
+component_1 = GeneralString:krbtgt
+component_2 = GeneralString:EXAMPLE.TEST

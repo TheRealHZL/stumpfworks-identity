@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily StumpfWorks DC01 PKINIT certificate check
+
+[Timer]
+OnCalendar=*-*-* 03:35:00
+RandomizedDelaySec=20m
+Persistent=true
+Unit=swbadge-dc01-cert-check.service
+
+[Install]
+WantedBy=timers.target

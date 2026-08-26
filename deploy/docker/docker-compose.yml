@@ -1,0 +1,11 @@
+services:
+  badge-server:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    ports: ["8080:8080"]
+    environment:
+      SWBADGE_DATABASE_PATH: /var/lib/stumpfworks-badge/badges.db
+    volumes:
+      - ../../data:/var/lib/stumpfworks-badge
+    restart: unless-stopped

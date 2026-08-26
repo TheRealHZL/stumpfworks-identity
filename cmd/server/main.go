@@ -1,0 +1,100 @@
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	adminauth "github.com/TheRealHZL/stumpfworks-identity/internal/auth"
+	"github.com/TheRealHZL/stumpfworks-identity/internal/config"
+	"github.com/TheRealHZL/stumpfworks-identity/internal/database"
+	"github.com/TheRealHZL/stumpfworks-identity/internal/directory"
+	app "github.com/TheRealHZL/stumpfworks-identity/internal/server"
+	"github.com/TheRealHZL/stumpfworks-identity/internal/version"
+	"log/slog"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+)
+
+func main() {
+	cfgPath := flag.String("config", "", "YAML configuration file")
+	show := flag.Bool("version", false, "show version")
+	checkDirectory := flag.Bool("check-directory", false, "verify configured directory connection and exit")
+	flag.Parse()
+	if *show {
+		fmt.Println("sw-badge-server", version.Version)
+		return
+	}
+	cfg, e := config.Load(*cfgPath)
+	if e != nil {
+		slog.Error("configuration failed", "error", e)
+		os.Exit(1)
+	}
+	configuredDirectory := directory.LDAP{URL: cfg.DirectoryURL, BaseDN: cfg.BaseDN, BindDN: cfg.BindDN, BindPassword: cfg.BindPassword, Domain: cfg.DirectoryDomain, AdminGroupDN: cfg.DirectoryAdminGroup, CAFile: cfg.DirectoryCAFile, CertSHA256: cfg.DirectoryCertSHA256}
+	if *checkDirectory {
+		if !cfg.DirectoryEnabled {
+			slog.Error("directory is disabled")
+			os.Exit(1)
+		}
+		users, err := configuredDirectory.ListUsers(context.Background())
+		if err != nil {
+			slog.Error("directory check failed", "error", err)
+			os.Exit(1)
+		}
+		fmt.Printf("directory ok: %d active users\n", len(users))
+		return
+	}
+	st, e := database.Open(cfg.DatabasePath)
+	if e != nil {
+		slog.Error("database failed", "error", e)
+		os.Exit(1)
+	}
+	defer st.Close()
+	if cfg.Demo {
+		seed(st)
+	}
+	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	var srv *app.Server
+	if cfg.DirectoryEnabled {
+		if !strings.HasPrefix(cfg.DirectoryURL, "ldaps://") {
+			slog.Error("directory URL must use ldaps:// when enabled")
+			os.Exit(1)
+		}
+		sessions, err := adminauth.NewSessions(cfg.SessionSecret, time.Hour)
+		if err != nil {
+			slog.Error("session configuration failed", "error", err)
+			os.Exit(1)
+		}
+		srv = app.NewProtected(st, log, configuredDirectory, sessions)
+	} else {
+		srv = app.New(st, log)
+	}
+	if cfg.PKINITEnabled {
+		issuer, err := app.LoadPKINITIssuer(cfg.PKINITCACertFile, cfg.PKINITCAKeyFile, cfg.PKINITRealm, 10*time.Minute)
+		if err != nil {
+			slog.Error("PKINIT configuration failed", "error", err)
+			os.Exit(1)
+		}
+		srv.ConfigurePKINIT(issuer)
+	}
+	log.Info("server starting", "component", "server", "listen", cfg.Listen, "version", version.Version)
+	if cfg.TLSCertFile != "" || cfg.TLSKeyFile != "" {
+		if cfg.TLSCertFile == "" || cfg.TLSKeyFile == "" {
+			slog.Error("both TLS certificate and key are required")
+			os.Exit(1)
+		}
+		e = http.ListenAndServeTLS(cfg.Listen, cfg.TLSCertFile, cfg.TLSKeyFile, srv.Handler())
+	} else {
+		e = http.ListenAndServe(cfg.Listen, srv.Handler())
+	}
+	if e != nil {
+		slog.Error("server stopped", "error", e)
+		os.Exit(1)
+	}
+}
+func seed(s *database.Store) {
+	for _, u := range []struct{ n, d string }{{"alice", "Alice Example"}, {"bob", "Bob Example"}} {
+		_, _ = s.CreateUser(context.Background(), u.n, u.d, "")
+	}
+}

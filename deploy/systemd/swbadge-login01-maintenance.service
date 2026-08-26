@@ -1,0 +1,16 @@
+[Unit]
+Description=StumpfWorks Badge Login maintenance checks
+After=sw-badge-server.service
+
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=/usr/local/sbin/swbadge-cert-check 2592000 /etc/stumpfworks-badge/tls/server.crt /etc/stumpfworks-badge/tls/ca.crt /etc/stumpfworks-badge/pkinit-ca/ca.crt
+ExecStart=/usr/local/sbin/swbadge-sqlite-backup /var/lib/stumpfworks-badge/badges.db /var/backups/stumpfworks-badge
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/backups/stumpfworks-badge
+RestrictSUIDSGID=true
+LockPersonality=true

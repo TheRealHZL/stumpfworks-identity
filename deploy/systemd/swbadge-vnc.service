@@ -1,0 +1,26 @@
+[Unit]
+Description=Persistent StumpfWorks WYSE VNC access
+After=network-online.target display-manager.service
+Wants=network-online.target
+ConditionPathExists=/etc/stumpfworks-badge/vnc.passwd
+
+[Service]
+Type=simple
+Environment=SWBADGE_VNC_LISTEN=127.0.0.1
+EnvironmentFile=-/etc/default/swbadge-vnc
+ExecStart=/usr/bin/x11vnc -display :0 -auth guess -forever -shared -repeat -noxdamage -rfbauth /etc/stumpfworks-badge/vnc.passwd -rfbport 5900 -listen ${SWBADGE_VNC_LISTEN}
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

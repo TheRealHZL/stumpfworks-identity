@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!DOCTYPE pam_mount SYSTEM "pam_mount.conf.xml.dtd">
+<pam_mount>
+    <debug enable="0" />
+
+    <volume user="*" fstype="cifs"
+        server="file01.example.test" path="%(USER)"
+        mountpoint="~/Netzlaufwerk"
+        options="sec=krb5,cruid=%(USERUID),nosuid,nodev" />
+
+    <volume user="*" fstype="cifs"
+        server="file01.example.test" path="public"
+        mountpoint="~/Öffentlich"
+        options="sec=krb5,cruid=%(USERUID),nosuid,nodev" />
+
+    <mntoptions allow="nosuid,nodev,loop,encryption,fsck,nonempty,allow_root,allow_other" />
+    <mntoptions require="nosuid,nodev" />
+    <logout wait="0" hup="no" term="no" kill="no" />
+    <mkmountpoint enable="1" remove="true" />
+</pam_mount>

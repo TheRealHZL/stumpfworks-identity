@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily StumpfWorks Badge Login maintenance
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+RandomizedDelaySec=20m
+Persistent=true
+Unit=swbadge-login01-maintenance.service
+
+[Install]
+WantedBy=timers.target

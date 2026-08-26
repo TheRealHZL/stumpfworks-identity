@@ -1,0 +1,17 @@
+server:
+  listen: "0.0.0.0:8080"
+database:
+  path: "./data/badges.db"
+directory:
+  enabled: false
+  url: "ldaps://dc01.example.test:636"
+  base_dn: "DC=example,DC=test"
+  bind_dn: ""
+  bind_password: ""
+  domain: "example.test"
+  admin_group_dn: "CN=SWBadge-Admins,CN=Users,DC=example,DC=test"
+  ca_file: ""
+
+auth:
+  # Prefer SWBADGE_SESSION_SECRET; use at least 32 random bytes.
+  session_secret: ""

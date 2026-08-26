@@ -1,0 +1,13 @@
+[Unit]
+Description=StumpfWorks DC01 PKINIT certificate check
+After=samba-ad-dc.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/swbadge-cert-check 2592000 /var/lib/samba/private/pkinit/dc01-kdc.crt /var/lib/samba/private/pkinit/pkinit-ca.crt
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictSUIDSGID=true
+LockPersonality=true

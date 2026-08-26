@@ -1,0 +1,26 @@
+[Unit]
+Description=StumpfWorks Badge Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=swbadge
+Group=swbadge
+UMask=0027
+Environment=GODEBUG=x509negativeserial=1
+ExecStart=/opt/stumpfworks-badge/sw-badge-server --config /etc/stumpfworks-badge/config.yaml
+WorkingDirectory=/var/lib/stumpfworks-badge
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/stumpfworks-badge /var/log/stumpfworks-badge
+ReadOnlyPaths=/etc/stumpfworks-badge/pkinit-ca
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

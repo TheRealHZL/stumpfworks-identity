@@ -1,0 +1,6 @@
+basicConstraints = critical,CA:false
+keyUsage = critical,digitalSignature,keyEncipherment
+extendedKeyUsage = 1.3.6.1.5.2.3.4,1.3.6.1.4.1.311.20.2.2
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid,issuer
+subjectAltName = otherName:1.3.6.1.4.1.311.20.2.3;UTF8:alice@example.test

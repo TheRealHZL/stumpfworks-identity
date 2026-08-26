@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=StumpfWorks Badge Greeter
+Comment=Native StumpfWorks LightDM badge and Active Directory login
+Exec=/usr/local/bin/sw-badge-native-greeter-wrapper
+Type=Application
+X-LightDM-Session-Type=x
