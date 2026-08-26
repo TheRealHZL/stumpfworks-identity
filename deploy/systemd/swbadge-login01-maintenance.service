@@ -1,5 +1,5 @@
 [Unit]
-Description=StumpfWorks Badge Login maintenance checks
+Description=StumpfWorks Identity maintenance checks
 After=sw-badge-server.service
 
 [Service]

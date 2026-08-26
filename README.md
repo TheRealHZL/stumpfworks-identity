@@ -101,6 +101,7 @@ docs/                Architecture, API, security and operations guides
 - [Operations and recovery](docs/operations.md)
 - [Development](docs/development.md)
 - [API](docs/api.md)
+- [Changelog](CHANGELOG.md)
 
 ## Branching and releases
 

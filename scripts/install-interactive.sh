@@ -305,7 +305,7 @@ usage() {
 
 role=${1-}
 if [ -z "$role" ]; then
-    echo "StumpfWorks Badge Login guided installer"
+    echo "StumpfWorks Identity guided installer"
     echo "  1) LOGIN01 server"
     echo "  2) Linux native client"
     echo "  3) DC01 certificate monitoring (no Kerberos changes)"

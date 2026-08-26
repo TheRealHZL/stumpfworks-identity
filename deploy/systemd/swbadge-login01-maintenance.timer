@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily StumpfWorks Badge Login maintenance
+Description=Daily StumpfWorks Identity maintenance
 
 [Timer]
 OnCalendar=*-*-* 03:15:00

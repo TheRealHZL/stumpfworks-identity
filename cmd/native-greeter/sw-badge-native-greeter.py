@@ -28,7 +28,7 @@ PAYLOAD = re.compile(r"^SWBADGE:1:([^:]+):(.+)$")
 
 class NativeGreeter(Gtk.Window):
     def __init__(self):
-        super().__init__(title="StumpfWorks Badge Login")
+        super().__init__(title="StumpfWorks Identity")
         self.badge_id = ""
         self.token = ""
         self.scanning = False
