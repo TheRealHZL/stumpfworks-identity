@@ -1,12 +1,12 @@
-# StumpfWorks Badge Login
+# StumpfWorks Identity
 
 > Native QR badge and PIN authentication for Linux clients, backed by Samba Active Directory, Kerberos PKINIT and short-lived credentials.
 
-![SWBA native LightDM greeter](docs/assets/swba-greeter.png)
+![StumpfWorks Identity native LightDM greeter](docs/assets/swba-greeter.png)
 
-SWBA turns a managed Linux workstation into a badge-enabled domain client. A user scans a revocable QR badge, enters a personal PIN and receives a real Active Directory Kerberos TGT. Normal AD username/password login remains available as a fallback.
+StumpfWorks Identity turns a managed Linux workstation into a badge-enabled domain client. A user scans a revocable QR badge, enters a personal PIN and receives a real Active Directory Kerberos TGT. Normal AD username/password login remains available as a fallback.
 
-## Why SWBA?
+## Why StumpfWorks Identity?
 
 - Native GTK3 LightDM greeter instead of a browser kiosk
 - QR badge plus personal PIN without storing the AD password
@@ -109,7 +109,7 @@ docs/                Architecture, API, security and operations guides
 - Feature and fix branches start from `development` and return through reviewed merges.
 - A merge into `main` requires local tests and an end-to-end test on the target systems.
 
-The v1.0 boundary is a stable badge-login platform. Identity administration is intentionally deferred to a later release and requires a dedicated least-privilege AD account, privileged-group protection, explicit confirmation, complete auditing and rollback.
+The v1.0 boundary is a stable identity and authentication platform. Identity administration is intentionally deferred to a later release and requires a dedicated least-privilege AD account, privileged-group protection, explicit confirmation, complete auditing and rollback.
 
 ## License
 
