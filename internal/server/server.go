@@ -75,6 +75,9 @@ func NewProtected(st *database.Store, l *slog.Logger, d directory.Directory, ses
 func (s *Server) Handler() http.Handler { return s.security(s.adminGuard(s.mux)) }
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, r *http.Request) { s.json(w, 200, map[string]string{"status": "ok"}) })
+	s.mux.HandleFunc("POST /api/v1/client/status", s.clientStatus)
+	s.mux.HandleFunc("GET /api/v1/clients", s.clients)
+	s.mux.HandleFunc("GET /status", s.systemStatusPage)
 	s.mux.HandleFunc("GET /api/v1/users", s.users)
 	s.mux.HandleFunc("POST /api/v1/users", s.users)
 	s.mux.HandleFunc("GET /api/v1/users/{id}", s.user)
@@ -105,7 +108,7 @@ func (s *Server) routes() {
 }
 func (s *Server) adminGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.protect || r.URL.Path == "/login" || r.URL.Path == "/api/v1/health" || r.URL.Path == "/api/v1/auth/badge" || r.URL.Path == "/api/v1/auth/pkinit" || strings.HasPrefix(r.URL.Path, "/self-service") || strings.HasPrefix(r.URL.Path, "/static/") {
+		if !s.protect || r.URL.Path == "/login" || r.URL.Path == "/api/v1/health" || r.URL.Path == "/api/v1/client/status" || r.URL.Path == "/api/v1/auth/badge" || r.URL.Path == "/api/v1/auth/pkinit" || strings.HasPrefix(r.URL.Path, "/self-service") || strings.HasPrefix(r.URL.Path, "/static/") {
 			next.ServeHTTP(w, r)
 			return
 		}

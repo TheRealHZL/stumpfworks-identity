@@ -37,11 +37,12 @@ The installer verifies certificate/key pairs and expiry, creates the restricted 
 Prepare:
 
 - Linux `sw-badge-pam-helper` binary
+- Linux `sw-badge-client-status` binary and a token provisioned on LOGIN01 for the exact client ID
 - trusted Homelab CA certificate
 - working AD membership through Winbind/PAM
 - LightDM, GTK3 LightDM bindings, `zbarcam`, Kerberos tools including Debian's `krb5-pkinit` package, and the camera
 
-The installer asks for LOGIN01 URL, unique client ID, realm, camera resolution and whether FILE01 mounts should be installed. It installs a root-controlled client configuration, native greeter, wrappers, camera helper, PAM helper, XGreeter entry and LightDM configuration. It backs up `/etc/pam.d/lightdm` and inserts exactly one isolated `pam_exec` rule before `common-auth`, preserving the password fallback. Restarting LightDM requires a separate confirmation because it ends the graphical session. The former role name `wyse01` remains accepted as a compatibility alias, but new installations should use `client`.
+The installer asks for LOGIN01 URL, unique client ID, its provisioned client-status token, realm, camera resolution and whether FILE01 mounts should be installed. It installs a root-controlled client configuration, root-only status token, native greeter, status collector and timer, wrappers, camera helper, PAM helper, XGreeter entry and LightDM configuration. It backs up `/etc/pam.d/lightdm` and inserts exactly one isolated `pam_exec` rule before `common-auth`, preserving the password fallback. Restarting LightDM requires a separate confirmation because it ends the graphical session. The former role name `wyse01` remains accepted as a compatibility alias, but new installations should use `client`.
 
 The v1.1 greeter uses NetworkManager to show the real LAN/WLAN and LOGIN01 state before login. On systems with a Wi-Fi adapter it offers a network chooser at the LightDM screen. Wi-Fi secrets are passed to NetworkManager through standard input, never command-line arguments or SWBA logs, and are stored by NetworkManager. The installer requires `nmcli` and installs a narrowly scoped polkit rule for the dedicated `lightdm` account. Test wired networking, a saved Wi-Fi profile, a new protected Wi-Fi network and the password fallback before production rollout.
 

@@ -58,6 +58,62 @@ func TestHealth(t *testing.T) {
 		t.Fatal(w.Code, w.Body.String())
 	}
 }
+
+func TestClientStatus(t *testing.T) {
+	s, st := testServer(t)
+	token := "a-long-random-client-token"
+	if _, err := st.CreateClient(t.Context(), "wyse01-greeter", HashClientToken(token)); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"client_id":"wyse01-greeter","version":"1.2.0-dev","network_status":"ok","ad_status":"ok","camera_status":"degraded","kerberos_status":"unknown"}`
+	request := func(given string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/client/status", strings.NewReader(body))
+		if given != "" {
+			r.Header.Set("Authorization", "Bearer "+given)
+		}
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, r)
+		return w
+	}
+	if w := request("wrong"); w.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong token returned %d", w.Code)
+	}
+	if w := request(token); w.Code != http.StatusNoContent {
+		t.Fatalf("valid status returned %d: %s", w.Code, w.Body.String())
+	}
+	c, err := st.ClientByID(t.Context(), "wyse01-greeter")
+	if err != nil || c.Version != "1.2.0-dev" || c.CameraStatus != "degraded" || c.LastSeenAt == nil {
+		t.Fatalf("client status not persisted: %+v, %v", c, err)
+	}
+}
+
+func TestSystemStatusClientOverview(t *testing.T) {
+	s, st := testServer(t)
+	if _, err := st.CreateClient(t.Context(), "client01", HashClientToken("must-not-leak")); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateClientStatus(t.Context(), "client01", "1.2.0-dev", "ok", "ok", "ok", "ok"); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodGet, "/status", nil)
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "client01") || !strings.Contains(w.Body.String(), "Healthy") {
+		t.Fatalf("status page returned %d: %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "must-not-leak") {
+		t.Fatal("client token leaked into status page")
+	}
+}
+
+func TestClientViewMarksStaleReports(t *testing.T) {
+	now := time.Now()
+	old := now.Add(-4 * time.Minute)
+	views := clientViews([]database.Client{{ClientID: "old-client", NetworkStatus: "ok", ADStatus: "ok", CameraStatus: "ok", KerberosStatus: "ok", LastSeenAt: &old}}, now)
+	if len(views) != 1 || views[0].Health != "Stale" || views[0].BadgeClass != "warning" {
+		t.Fatalf("unexpected stale view: %+v", views)
+	}
+}
 func TestAuth(t *testing.T) {
 	s, st := testServer(t)
 	u, e := st.CreateUser(t.Context(), "alice", "Alice Example", "")

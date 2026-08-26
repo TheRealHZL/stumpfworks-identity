@@ -1,0 +1,11 @@
+[Unit]
+Description=Report StumpfWorks Identity client status periodically
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+RandomizedDelaySec=15s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

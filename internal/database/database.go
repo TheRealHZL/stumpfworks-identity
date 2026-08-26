@@ -13,7 +13,8 @@ import (
 const migration = `CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL, directory_dn TEXT NOT NULL DEFAULT '', pin_hash TEXT NOT NULL DEFAULT '', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS badges (id INTEGER PRIMARY KEY AUTOINCREMENT, badge_code TEXT NOT NULL UNIQUE, user_id INTEGER NOT NULL REFERENCES users(id), token_hash TEXT NOT NULL, enabled BOOLEAN NOT NULL DEFAULT 1, description TEXT NOT NULL DEFAULT '', issued_by TEXT NOT NULL DEFAULT '', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, last_used_at DATETIME, revoked_at DATETIME);
 CREATE TABLE IF NOT EXISTS audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, event_type TEXT NOT NULL, badge_id TEXT NOT NULL DEFAULT '', username TEXT NOT NULL DEFAULT '', client_id TEXT NOT NULL DEFAULT '', success BOOLEAN NOT NULL, ip_address TEXT NOT NULL DEFAULT '', timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, details TEXT NOT NULL DEFAULT '');
-CREATE INDEX IF NOT EXISTS idx_badges_code ON badges(badge_code); CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);`
+CREATE TABLE IF NOT EXISTS clients (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id TEXT NOT NULL UNIQUE, token_hash TEXT NOT NULL, version TEXT NOT NULL DEFAULT '', network_status TEXT NOT NULL DEFAULT 'unknown', ad_status TEXT NOT NULL DEFAULT 'unknown', camera_status TEXT NOT NULL DEFAULT 'unknown', kerberos_status TEXT NOT NULL DEFAULT 'unknown', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, last_seen_at DATETIME);
+CREATE INDEX IF NOT EXISTS idx_badges_code ON badges(badge_code); CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp); CREATE INDEX IF NOT EXISTS idx_clients_last_seen ON clients(last_seen_at);`
 
 type Store struct{ DB *sql.DB }
 type User struct {
@@ -46,6 +47,18 @@ type Audit struct {
 	IPAddress                              string
 	Timestamp                              time.Time
 	Details                                string
+}
+type Client struct {
+	ID             int64      `json:"id"`
+	ClientID       string     `json:"client_id"`
+	TokenHash      string     `json:"-"`
+	Version        string     `json:"version"`
+	NetworkStatus  string     `json:"network_status"`
+	ADStatus       string     `json:"ad_status"`
+	CameraStatus   string     `json:"camera_status"`
+	KerberosStatus string     `json:"kerberos_status"`
+	CreatedAt      time.Time  `json:"created_at"`
+	LastSeenAt     *time.Time `json:"last_seen_at,omitempty"`
 }
 
 func Open(path string) (*Store, error) {
@@ -206,4 +219,46 @@ func (s *Store) Stats(ctx context.Context) map[string]int {
 		out[k] = n
 	}
 	return out
+}
+
+func (s *Store) CreateClient(ctx context.Context, clientID, tokenHash string) (Client, error) {
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO clients(client_id,token_hash) VALUES(?,?)`, clientID, tokenHash)
+	if err != nil {
+		return Client{}, err
+	}
+	return s.ClientByID(ctx, clientID)
+}
+
+func (s *Store) ClientByID(ctx context.Context, clientID string) (c Client, err error) {
+	err = s.DB.QueryRowContext(ctx, `SELECT id,client_id,token_hash,version,network_status,ad_status,camera_status,kerberos_status,created_at,last_seen_at FROM clients WHERE client_id=?`, clientID).Scan(&c.ID, &c.ClientID, &c.TokenHash, &c.Version, &c.NetworkStatus, &c.ADStatus, &c.CameraStatus, &c.KerberosStatus, &c.CreatedAt, &c.LastSeenAt)
+	return
+}
+
+func (s *Store) UpdateClientStatus(ctx context.Context, clientID, version, network, ad, camera, kerberos string) error {
+	r, err := s.DB.ExecContext(ctx, `UPDATE clients SET version=?,network_status=?,ad_status=?,camera_status=?,kerberos_status=?,last_seen_at=CURRENT_TIMESTAMP WHERE client_id=?`, version, network, ad, camera, kerberos, clientID)
+	if err != nil {
+		return err
+	}
+	n, _ := r.RowsAffected()
+	if n != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Store) Clients(ctx context.Context) ([]Client, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,client_id,token_hash,version,network_status,ad_status,camera_status,kerberos_status,created_at,last_seen_at FROM clients ORDER BY client_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Client{}
+	for rows.Next() {
+		var c Client
+		if err = rows.Scan(&c.ID, &c.ClientID, &c.TokenHash, &c.Version, &c.NetworkStatus, &c.ADStatus, &c.CameraStatus, &c.KerberosStatus, &c.CreatedAt, &c.LastSeenAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }

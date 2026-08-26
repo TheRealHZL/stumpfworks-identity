@@ -2,6 +2,15 @@
 
 All notable changes to StumpfWorks Identity are documented here.
 
+## [Unreleased]
+
+### Added
+
+- Server-side client registration with one-time random credentials stored only as hashes.
+- Authenticated, data-minimized client health reporting and a protected client-list API.
+- A hardened one-shot Linux status collector with a periodic systemd timer.
+- A protected administrative client-health overview with explicit stale-report detection.
+
 ## [1.1.0] - 2026-08-26
 
 ### Added
