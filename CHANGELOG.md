@@ -17,6 +17,9 @@ All notable changes to StumpfWorks Identity are documented here.
 - Isolated atomic staging with fixed installation targets, a machine-readable plan and a second payload-integrity check.
 - Atomic rollback snapshot preparation with source hashes, missing-file records and symlink rejection.
 - Prevalidated, resumable rollback restoration with atomic file replacement and failure-injection tests.
+- Internal atomic installation transaction with automatic rollback and tampered-stage rejection, still unavailable from the CLI.
+- Mandatory post-install health gate with automatic restoration after an injected unhealthy result.
+- Component-aware systemd health orchestration and an explicit maintenance-window requirement for greeter updates.
 
 ## [1.1.0] - 2026-08-26
 
