@@ -10,6 +10,25 @@ An update ZIP contains exactly:
 
 The schema records release version, channel (`development` or `stable`), target OS/architecture, minimum client version, creation time, and the exact size and SHA-256 digest of every component. Component names come from a fixed allowlist; paths, commands and installation destinations cannot be supplied by a package.
 
+`update-packager` creates Ed25519 key pairs and signed packages. Development and stable releases must use separate keys. The private key must live outside the repository on a restricted release workstation and must never be copied to LOGIN01 or a client. The public key is the only key installed on clients. Key and package output paths are create-only and existing files are never overwritten.
+
+Example development key generation and package creation:
+
+```bash
+update-packager --generate-key \
+  --private-key /secure/offline/development-update-ed25519.key \
+  --public-key /secure/offline/development-update-ed25519.pub
+
+update-packager \
+  --private-key /secure/offline/development-update-ed25519.key \
+  --output stumpfworks-client-1.2.0-linux-amd64.zip \
+  --release 1.2.0 \
+  --channel development \
+  --architecture linux-amd64 \
+  --minimum-version 1.2.0-dev \
+  --component sw-badge-client-status=./sw-badge-client-status
+```
+
 Verification rejects unknown manifest fields, trailing JSON, duplicate or unlisted ZIP entries, unsafe paths, unsupported components, malformed versions, wrong architecture, excessive sizes, invalid hashes and invalid signatures. The release public key is provided separately as a base64 Ed25519 key. A private release key must never be installed on LOGIN01 or a client and must never be committed.
 
 Example dry run:

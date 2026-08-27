@@ -22,6 +22,7 @@ All notable changes to StumpfWorks Identity are documented here.
 - Component-aware systemd health orchestration and an explicit maintenance-window requirement for greeter updates.
 - Guarded client-updater installation mode with mandatory fresh staging and rollback paths.
 - Post-rollback systemd recovery checks and explicit LightDM restart handling for approved greeter maintenance.
+- Create-only Ed25519 development key generation and signed update packaging with fixed component validation.
 
 ## [1.1.0] - 2026-08-26
 
