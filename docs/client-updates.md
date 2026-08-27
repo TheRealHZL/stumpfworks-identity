@@ -1,6 +1,6 @@
 # Signed client updates
 
-The first update increments are verification and isolated staging only. `sw-badge-client-updater` cannot install files and exits unless `--dry-run` is supplied.
+`sw-badge-client-updater` supports mutually exclusive verification and installation modes. Installation is restricted to signed packages, compiled-in component targets, new absolute staging and rollback directories, atomic file replacement and mandatory service health checks.
 
 An update ZIP contains exactly:
 
@@ -27,6 +27,19 @@ Rollback preparation uses the fixed stage plan to copy only known existing targe
 
 The internal restore implementation validates the complete manifest and every backup before changing any target. Existing files are restored through same-directory atomic replacements; files recorded as previously absent are removed. A restore can be rerun safely after an injected mid-restore failure. Restore is not exposed through the CLI yet, and package installation remains disabled until installation failure tests invoke this restore automatically.
 
-The internal installation transaction now revalidates the complete staged payload, creates the rollback snapshot, prepares replacement files and atomically replaces fixed targets. Any preparation or application error invokes rollback automatically. A successful transaction requires a non-optional post-install health callback; a failed health result restores the old files after proving that the new files were visible to the check. Failure-injection tests also prove that a tampered stage is rejected before a rollback directory or target change is created. Installation remains absent from the public CLI while the health gates are exercised beyond their simulated command runner.
+The installation transaction revalidates the complete staged payload, creates the rollback snapshot, prepares replacement files and atomically replaces fixed targets. Any preparation or application error invokes rollback automatically. A successful transaction requires a non-optional post-install health callback; a failed health result restores the old files after proving that the new files were visible to the check. Failure-injection tests also prove that a tampered stage is rejected before a rollback directory or target change is created.
 
-Concrete orchestration now requires an explicit maintenance-window flag for greeter components. Non-greeter updates reload systemd only when unit files changed, submit an immediate client-status report when relevant, require the status timer to remain active and always require LightDM to remain active. Command failures propagate into the mandatory health gate and therefore trigger automatic rollback. These commands are covered by a simulated runner; the installation path remains unavailable from the CLI.
+Concrete orchestration requires an explicit maintenance-window flag for greeter components. Non-greeter updates reload systemd only when unit files changed, submit an immediate client-status report when relevant, require the status timer to remain active and always require LightDM to remain active. Command failures propagate into the mandatory health gate and therefore trigger automatic rollback. These commands are covered by a simulated runner and are now used by the guarded CLI installation mode.
+
+Installation requires fresh, distinct absolute directories. Neither directory may already exist:
+
+```bash
+sw-badge-client-updater \
+  --install \
+  --package stumpfworks-client-1.2.1-linux-amd64.zip \
+  --public-key /etc/stumpfworks-badge/update-release.pub \
+  --stage-dir /var/lib/stumpfworks-badge/updates/1.2.1-stage \
+  --rollback-dir /var/backups/stumpfworks-badge/client-1.2.1
+```
+
+The install mode stages and revalidates the package, creates the complete rollback snapshot before replacing files, and runs component-aware systemd checks. If installation or health validation fails, all files are restored and systemd health recovery runs against the restored state. A greeter component is rejected unless `--allow-lightdm-maintenance` is supplied; with that explicit authorization LightDM is restarted after installation and again after any automatic rollback. An active transient VNC service is rebound with `try-restart`; an inactive service remains inactive. The normal password fallback must be checked during a separately approved production maintenance test.

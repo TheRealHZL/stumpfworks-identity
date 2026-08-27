@@ -30,7 +30,7 @@ func TestInstallStagedCreatesRollbackAndInstalls(t *testing.T) {
 		t.Fatal(err)
 	}
 	rollbackDir := filepath.Join(t.TempDir(), "rollback")
-	if err := InstallStaged(root, stageDir, rollbackDir, time.Now(), false, func() error { return nil }); err != nil {
+	if err := InstallStaged(root, stageDir, rollbackDir, time.Now(), false, func() error { return nil }, func() error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	installed, err := os.ReadFile(target)
@@ -53,13 +53,17 @@ func TestInstallFailureAutomaticallyRestoresAllTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 	rollbackDir := filepath.Join(t.TempDir(), "rollback")
-	err := installStaged(root, stageDir, rollbackDir, time.Now(), false, func(_ int, _ StagedComponent) error { return errors.New("injected installation failure") }, func() error { return nil })
+	recovered := false
+	err := installStaged(root, stageDir, rollbackDir, time.Now(), false, func(_ int, _ StagedComponent) error { return errors.New("injected installation failure") }, func() error { return nil }, func() error { recovered = true; return nil })
 	if err == nil || !strings.Contains(err.Error(), "rolled back") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	restored, readErr := os.ReadFile(target)
 	if readErr != nil || string(restored) != "old status binary" {
 		t.Fatalf("automatic rollback failed: %q, %v", restored, readErr)
+	}
+	if !recovered {
+		t.Fatal("post-rollback recovery was not invoked")
 	}
 }
 
@@ -76,7 +80,7 @@ func TestInstallRejectsTamperedStageBeforeRollbackOrTargetChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	rollbackDir := filepath.Join(t.TempDir(), "rollback")
-	if err := InstallStaged(root, stageDir, rollbackDir, time.Now(), false, func() error { return nil }); err == nil || !strings.Contains(err.Error(), "validate") {
+	if err := InstallStaged(root, stageDir, rollbackDir, time.Now(), false, func() error { return nil }, func() error { return nil }); err == nil || !strings.Contains(err.Error(), "validate") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	current, _ := os.ReadFile(target)
@@ -104,7 +108,7 @@ func TestFailedPostInstallHealthCheckRestoresInstalledFile(t *testing.T) {
 			return errors.New("new binary not visible to health check")
 		}
 		return errors.New("injected unhealthy state")
-	})
+	}, func() error { return nil })
 	if err == nil || !strings.Contains(err.Error(), "rolled back") {
 		t.Fatalf("unexpected health-check error: %v", err)
 	}

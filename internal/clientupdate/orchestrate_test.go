@@ -48,3 +48,15 @@ func TestGreeterPlanRequiresMaintenanceWindow(t *testing.T) {
 		t.Fatal("greeter update did not require maintenance")
 	}
 }
+
+func TestGreeterHealthRestartsLightDM(t *testing.T) {
+	plan := StagePlan{Components: []StagedComponent{{Component: "sw-badge-native-greeter", RestartLightDM: true}}}
+	runner := &fakeRunner{}
+	if err := PostInstallHealthCheck(context.Background(), plan, runner)(); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"systemctl restart lightdm.service", "systemctl try-restart swbadge-vnc-lan-live.service", "systemctl is-active lightdm.service"}
+	if strings.Join(runner.calls, "|") != strings.Join(want, "|") {
+		t.Fatalf("unexpected commands: %v", runner.calls)
+	}
+}

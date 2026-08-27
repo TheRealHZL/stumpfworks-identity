@@ -11,14 +11,17 @@ import (
 	"time"
 )
 
-func InstallStaged(root, stageDir, rollbackDir string, now time.Time, allowLightDMMaintenance bool, healthCheck func() error) error {
+func InstallStaged(root, stageDir, rollbackDir string, now time.Time, allowLightDMMaintenance bool, healthCheck, rollbackRecovery func() error) error {
 	if healthCheck == nil {
 		return errors.New("post-install health check is required")
 	}
-	return installStaged(root, stageDir, rollbackDir, now, allowLightDMMaintenance, nil, healthCheck)
+	if rollbackRecovery == nil {
+		return errors.New("post-rollback recovery check is required")
+	}
+	return installStaged(root, stageDir, rollbackDir, now, allowLightDMMaintenance, nil, healthCheck, rollbackRecovery)
 }
 
-func installStaged(root, stageDir, rollbackDir string, now time.Time, allowLightDMMaintenance bool, beforeApply func(int, StagedComponent) error, healthCheck func() error) error {
+func installStaged(root, stageDir, rollbackDir string, now time.Time, allowLightDMMaintenance bool, beforeApply func(int, StagedComponent) error, healthCheck, rollbackRecovery func() error) error {
 	plan, err := loadStagePlan(stageDir)
 	if err != nil {
 		return err
@@ -34,44 +37,44 @@ func installStaged(root, stageDir, rollbackDir string, now time.Time, allowLight
 	}
 	installPrepared := filepath.Join(stageDir, ".install-prepared")
 	if err = os.RemoveAll(installPrepared); err != nil {
-		return rollbackInstallFailure(root, rollbackDir, err)
+		return rollbackInstallFailure(root, rollbackDir, err, rollbackRecovery)
 	}
 	if err = os.Mkdir(installPrepared, 0700); err != nil {
-		return rollbackInstallFailure(root, rollbackDir, err)
+		return rollbackInstallFailure(root, rollbackDir, err, rollbackRecovery)
 	}
 	defer os.RemoveAll(installPrepared)
 	for _, component := range plan.Components {
 		source := filepath.Join(stageDir, "payload", component.Component)
 		destination := filepath.Join(installPrepared, component.Component)
 		if err = copyAndVerify(source, destination, fileSize(source), component.SHA256, os.FileMode(component.Mode)); err != nil {
-			return rollbackInstallFailure(root, rollbackDir, fmt.Errorf("prepare %s: %w", component.Component, err))
+			return rollbackInstallFailure(root, rollbackDir, fmt.Errorf("prepare %s: %w", component.Component, err), rollbackRecovery)
 		}
 	}
 	for index, component := range plan.Components {
 		if beforeApply != nil {
 			if err = beforeApply(index, component); err != nil {
-				return rollbackInstallFailure(root, rollbackDir, err)
+				return rollbackInstallFailure(root, rollbackDir, err, rollbackRecovery)
 			}
 		}
 		target := rootedTarget(root, component.Target)
 		if err = os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-			return rollbackInstallFailure(root, rollbackDir, err)
+			return rollbackInstallFailure(root, rollbackDir, err, rollbackRecovery)
 		}
 		replacement := target + ".swbadge-install-new"
 		if err = copyAndVerify(filepath.Join(installPrepared, component.Component), replacement, fileSize(filepath.Join(installPrepared, component.Component)), component.SHA256, os.FileMode(component.Mode)); err != nil {
 			_ = os.Remove(replacement)
-			return rollbackInstallFailure(root, rollbackDir, err)
+			return rollbackInstallFailure(root, rollbackDir, err, rollbackRecovery)
 		}
 		if err = os.Rename(replacement, target); err != nil {
 			_ = os.Remove(replacement)
-			return rollbackInstallFailure(root, rollbackDir, err)
+			return rollbackInstallFailure(root, rollbackDir, err, rollbackRecovery)
 		}
 	}
 	if healthCheck == nil {
-		return rollbackInstallFailure(root, rollbackDir, errors.New("post-install health check is required"))
+		return rollbackInstallFailure(root, rollbackDir, errors.New("post-install health check is required"), rollbackRecovery)
 	}
 	if err = healthCheck(); err != nil {
-		return rollbackInstallFailure(root, rollbackDir, fmt.Errorf("post-install health check failed: %w", err))
+		return rollbackInstallFailure(root, rollbackDir, fmt.Errorf("post-install health check failed: %w", err), rollbackRecovery)
 	}
 	return nil
 }
@@ -137,9 +140,15 @@ func validateStagedPayload(stageDir string, plan StagePlan) error {
 	return nil
 }
 
-func rollbackInstallFailure(root, rollbackDir string, installErr error) error {
+func rollbackInstallFailure(root, rollbackDir string, installErr error, rollbackRecovery func() error) error {
 	if rollbackErr := RestoreRollback(root, rollbackDir); rollbackErr != nil {
 		return fmt.Errorf("installation failed: %v; automatic rollback failed: %w", installErr, rollbackErr)
+	}
+	if rollbackRecovery == nil {
+		return fmt.Errorf("installation failed and files were restored, but rollback recovery check is missing: %w", installErr)
+	}
+	if recoveryErr := rollbackRecovery(); recoveryErr != nil {
+		return fmt.Errorf("installation failed: %v; files were restored, but rollback recovery failed: %w", installErr, recoveryErr)
 	}
 	return fmt.Errorf("installation failed and was rolled back: %w", installErr)
 }

@@ -22,6 +22,14 @@ func (ExecRunner) Run(ctx context.Context, name string, args ...string) error {
 }
 
 func PostInstallHealthCheck(parent context.Context, plan StagePlan, runner CommandRunner) func() error {
+	return serviceHealthCheck(parent, plan, runner, RequiresLightDMMaintenance(plan))
+}
+
+func PostRollbackRecovery(parent context.Context, plan StagePlan, runner CommandRunner) func() error {
+	return serviceHealthCheck(parent, plan, runner, RequiresLightDMMaintenance(plan))
+}
+
+func serviceHealthCheck(parent context.Context, plan StagePlan, runner CommandRunner, restartLightDM bool) func() error {
 	return func() error {
 		if runner == nil {
 			return errors.New("health-check command runner is required")
@@ -48,6 +56,14 @@ func PostInstallHealthCheck(parent context.Context, plan StagePlan, runner Comma
 			}
 			if err := runner.Run(ctx, "systemctl", "is-active", "swbadge-client-status.timer"); err != nil {
 				return fmt.Errorf("client status timer: %w", err)
+			}
+		}
+		if restartLightDM {
+			if err := runner.Run(ctx, "systemctl", "restart", "lightdm.service"); err != nil {
+				return fmt.Errorf("LightDM restart: %w", err)
+			}
+			if err := runner.Run(ctx, "systemctl", "try-restart", "swbadge-vnc-lan-live.service"); err != nil {
+				return fmt.Errorf("VNC rebind: %w", err)
 			}
 		}
 		if err := runner.Run(ctx, "systemctl", "is-active", "lightdm.service"); err != nil {

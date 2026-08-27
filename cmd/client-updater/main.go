@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
+	"path"
+	"time"
 
 	"github.com/TheRealHZL/stumpfworks-identity/internal/clientupdate"
 	"github.com/TheRealHZL/stumpfworks-identity/internal/version"
@@ -15,14 +18,17 @@ func main() {
 	architecture := flag.String("architecture", "", "expected OS-architecture (defaults to current platform)")
 	stageDir := flag.String("stage-dir", "", "optional new directory for verified payload staging")
 	dryRun := flag.Bool("dry-run", false, "verify without installing")
+	install := flag.Bool("install", false, "install a verified package with automatic rollback")
+	rollbackDir := flag.String("rollback-dir", "", "new rollback directory required for installation")
+	allowLightDMMaintenance := flag.Bool("allow-lightdm-maintenance", false, "allow a greeter update to restart LightDM")
 	show := flag.Bool("version", false, "show version")
 	flag.Parse()
 	if *show {
 		fmt.Println("sw-badge-client-updater", version.Version)
 		return
 	}
-	if !*dryRun {
-		fatal("installation is not implemented; --dry-run is required")
+	if err := validateInvocation(*dryRun, *install, *stageDir, *rollbackDir, *allowLightDMMaintenance); err != nil {
+		fatal(err.Error())
 	}
 	if *packageFile == "" || *publicKeyFile == "" {
 		fatal("package and public key are required")
@@ -30,6 +36,18 @@ func main() {
 	publicKey, err := clientupdate.LoadPublicKey(*publicKeyFile)
 	if err != nil {
 		fatal(err.Error())
+	}
+	if *install {
+		plan, err := clientupdate.VerifyAndStage(*packageFile, publicKey, *architecture, version.Version, *stageDir)
+		if err != nil {
+			fatal(err.Error())
+		}
+		runner := clientupdate.ExecRunner{}
+		if err = clientupdate.InstallStaged("/", *stageDir, *rollbackDir, time.Now(), *allowLightDMMaintenance, clientupdate.PostInstallHealthCheck(context.Background(), plan, runner), clientupdate.PostRollbackRecovery(context.Background(), plan, runner)); err != nil {
+			fatal(err.Error())
+		}
+		fmt.Printf("installed release=%s components=%d rollback=%s\n", plan.ReleaseVersion, len(plan.Components), *rollbackDir)
+		return
 	}
 	result, err := clientupdate.VerifyPackage(*packageFile, publicKey, *architecture, version.Version)
 	if err != nil {
@@ -40,18 +58,31 @@ func main() {
 		if err != nil {
 			fatal(err.Error())
 		}
-		fmt.Printf("staged directory=%s components=%d restart_lightdm=%t\n", *stageDir, len(plan.Components), requiresLightDM(plan))
+		fmt.Printf("staged directory=%s components=%d restart_lightdm=%t\n", *stageDir, len(plan.Components), clientupdate.RequiresLightDMMaintenance(plan))
 	}
 	fmt.Printf("verified release=%s channel=%s architecture=%s files=%d\n", result.Manifest.ReleaseVersion, result.Manifest.Channel, result.Manifest.Architecture, len(result.Files))
 }
 
-func requiresLightDM(plan clientupdate.StagePlan) bool {
-	for _, component := range plan.Components {
-		if component.RestartLightDM {
-			return true
-		}
+func validateInvocation(dryRun, install bool, stageDir, rollbackDir string, allowLightDMMaintenance bool) error {
+	if dryRun == install {
+		return fmt.Errorf("exactly one of --dry-run or --install is required")
 	}
-	return false
+	if dryRun {
+		if rollbackDir != "" || allowLightDMMaintenance {
+			return fmt.Errorf("rollback and LightDM maintenance options require --install")
+		}
+		return nil
+	}
+	if stageDir == "" || rollbackDir == "" {
+		return fmt.Errorf("--install requires --stage-dir and --rollback-dir")
+	}
+	if !path.IsAbs(stageDir) || !path.IsAbs(rollbackDir) {
+		return fmt.Errorf("installation stage and rollback directories must be absolute paths")
+	}
+	if path.Clean(stageDir) == path.Clean(rollbackDir) {
+		return fmt.Errorf("stage and rollback directories must differ")
+	}
+	return nil
 }
 
 func fatal(message string) { fmt.Fprintln(os.Stderr, "client updater:", message); os.Exit(1) }
