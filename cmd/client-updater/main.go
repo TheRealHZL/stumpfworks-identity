@@ -43,7 +43,20 @@ func main() {
 			fatal(err.Error())
 		}
 		runner := clientupdate.ExecRunner{}
-		if err = clientupdate.InstallStaged("/", *stageDir, *rollbackDir, time.Now(), *allowLightDMMaintenance, clientupdate.PostInstallHealthCheck(context.Background(), plan, runner), clientupdate.PostRollbackRecovery(context.Background(), plan, runner)); err != nil {
+		installedAt := time.Now().UTC()
+		health := func() error {
+			if stateErr := clientupdate.WriteUpdateState(clientupdate.DefaultStatePath, clientupdate.UpdateState{Version: plan.ReleaseVersion, Status: "success", UpdatedAt: installedAt, RollbackAvailable: true}); stateErr != nil {
+				return stateErr
+			}
+			return clientupdate.PostInstallHealthCheck(context.Background(), plan, runner)()
+		}
+		recovery := func() error {
+			if stateErr := clientupdate.WriteUpdateState(clientupdate.DefaultStatePath, clientupdate.UpdateState{Version: plan.ReleaseVersion, Status: "failed", UpdatedAt: installedAt, RollbackAvailable: true}); stateErr != nil {
+				return stateErr
+			}
+			return clientupdate.PostRollbackRecovery(context.Background(), plan, runner)()
+		}
+		if err = clientupdate.InstallStaged("/", *stageDir, *rollbackDir, installedAt, *allowLightDMMaintenance, health, recovery); err != nil {
 			fatal(err.Error())
 		}
 		fmt.Printf("installed release=%s components=%d rollback=%s\n", plan.ReleaseVersion, len(plan.Components), *rollbackDir)

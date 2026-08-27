@@ -16,12 +16,20 @@ import (
 )
 
 type ClientStatusRequest struct {
-	ClientID       string `json:"client_id"`
-	Version        string `json:"version"`
-	NetworkStatus  string `json:"network_status"`
-	ADStatus       string `json:"ad_status"`
-	CameraStatus   string `json:"camera_status"`
-	KerberosStatus string `json:"kerberos_status"`
+	ClientID       string               `json:"client_id"`
+	Version        string               `json:"version"`
+	NetworkStatus  string               `json:"network_status"`
+	ADStatus       string               `json:"ad_status"`
+	CameraStatus   string               `json:"camera_status"`
+	KerberosStatus string               `json:"kerberos_status"`
+	Update         *ClientUpdateRequest `json:"update,omitempty"`
+}
+
+type ClientUpdateRequest struct {
+	Version           string    `json:"version"`
+	Status            string    `json:"status"`
+	UpdatedAt         time.Time `json:"updated_at"`
+	RollbackAvailable bool      `json:"rollback_available"`
 }
 
 func HashClientToken(token string) string {
@@ -48,7 +56,7 @@ func (s *Server) clientStatus(w http.ResponseWriter, r *http.Request) {
 	var in ClientStatusRequest
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
 	dec.DisallowUnknownFields()
-	if dec.Decode(&in) != nil || !validClientID(in.ClientID) || len(in.Version) > 64 || !validState(in.NetworkStatus) || !validState(in.ADStatus) || !validState(in.CameraStatus) || !validState(in.KerberosStatus) {
+	if dec.Decode(&in) != nil || !validClientID(in.ClientID) || len(in.Version) > 64 || !validState(in.NetworkStatus) || !validState(in.ADStatus) || !validState(in.CameraStatus) || !validState(in.KerberosStatus) || !validClientUpdate(in.Update, time.Now()) {
 		s.problem(w, http.StatusBadRequest, "invalid_client_status")
 		return
 	}
@@ -81,11 +89,28 @@ func (s *Server) clientStatus(w http.ResponseWriter, r *http.Request) {
 		s.problem(w, http.StatusForbidden, "client_disabled")
 		return
 	}
-	if err = s.store.UpdateClientStatus(r.Context(), in.ClientID, in.Version, in.NetworkStatus, in.ADStatus, in.CameraStatus, in.KerberosStatus); err != nil {
+	var update *database.ClientUpdate
+	if in.Update != nil {
+		update = &database.ClientUpdate{Version: in.Update.Version, Status: in.Update.Status, UpdatedAt: in.Update.UpdatedAt.UTC(), RollbackAvailable: in.Update.RollbackAvailable}
+	}
+	if err = s.store.UpdateClientStatusWithUpdate(r.Context(), in.ClientID, in.Version, in.NetworkStatus, in.ADStatus, in.CameraStatus, in.KerberosStatus, update); err != nil {
 		s.problem(w, http.StatusInternalServerError, "status_update_failed")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func validClientUpdate(update *ClientUpdateRequest, now time.Time) bool {
+	if update == nil {
+		return true
+	}
+	if len(update.Version) > 64 || update.Status != "success" && update.Status != "failed" || update.UpdatedAt.IsZero() {
+		return false
+	}
+	if _, ok := parseSemanticVersion(update.Version); !ok {
+		return false
+	}
+	return !update.UpdatedAt.After(now.Add(5*time.Minute)) && !update.UpdatedAt.Before(now.AddDate(-1, 0, 0))
 }
 
 func (s *Server) clients(w http.ResponseWriter, r *http.Request) {
@@ -101,6 +126,7 @@ type clientView struct {
 	ClientID, Version, Network, AD, Camera, Kerberos string
 	LastSeen, Health, BadgeClass                     string
 	Update, UpdateClass                              string
+	LastUpdate, LastUpdateClass                      string
 }
 
 func clientViews(clients []database.Client, now time.Time, serverVersion string) []clientView {
@@ -111,6 +137,19 @@ func clientViews(clients []database.Client, now time.Time, serverVersion string)
 			v.Version = "—"
 		}
 		v.Update, v.UpdateClass = updateState(c.Version, serverVersion)
+		v.LastUpdate, v.LastUpdateClass = "No update reported", "neutral"
+		if c.LastUpdateAt != nil {
+			rollback := "no rollback"
+			if c.RollbackAvailable {
+				rollback = "rollback available"
+			}
+			v.LastUpdate = c.LastUpdateVersion + " · " + c.LastUpdateStatus + " · " + c.LastUpdateAt.Local().Format("2006-01-02 15:04") + " · " + rollback
+			if c.LastUpdateStatus == "success" {
+				v.LastUpdateClass = "success"
+			} else {
+				v.LastUpdateClass = "danger-text"
+			}
+		}
 		if c.LastSeenAt != nil {
 			age := now.Sub(*c.LastSeenAt)
 			if age < 0 {
@@ -233,7 +272,7 @@ func updateState(clientVersion, serverVersion string) (string, string) {
 	}
 }
 
-var systemStatusTemplate = template.Must(template.New("system-status").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>System status — StumpfWorks Identity</title><link rel="stylesheet" href="/static/style.css"></head><body><main class="content standalone"><header class="topbar"><div><p class="eyebrow">STUMPFWORKS / IDENTITY</p><h1>System status</h1></div><a class="button secondary" href="/">← Dashboard</a></header><section class="grid status-grid"><article><span class="status-symbol">●</span><small>SERVER</small><strong>Online</strong><p>Authentication API is available.</p></article><article><span class="status-symbol">●</span><small>DATABASE</small><strong>SQLite ready</strong><p>Identity and client data stores are available.</p></article><article><span class="status-symbol">●</span><small>UPTIME</small><strong>{{.Uptime}}</strong><p>Current server process uptime.</p></article><article><span class="status-symbol">●</span><small>VERSION</small><strong>{{.Version}}</strong><p>Running LOGIN01 build and update target.</p></article></section><section class="panel"><div class="panel-head"><div><h2>Registered clients</h2><p>Health reports contain only bounded, non-personal device readiness data. Reports older than three minutes are stale.</p></div><span class="count">{{len .Clients}} registered</span></div><div class="table-wrap"><table><thead><tr><th>Client</th><th>Version</th><th>Update</th><th>Last report</th><th>Network</th><th>AD</th><th>Camera</th><th>Kerberos</th><th>Overall</th></tr></thead><tbody>{{range .Clients}}<tr><td class="mono"><strong>{{.ClientID}}</strong></td><td>{{.Version}}</td><td><span class="badge {{.UpdateClass}}">{{.Update}}</span></td><td class="muted">{{.LastSeen}}</td><td>{{.Network}}</td><td>{{.AD}}</td><td>{{.Camera}}</td><td>{{.Kerberos}}</td><td><span class="badge {{.BadgeClass}}">{{.Health}}</span></td></tr>{{else}}<tr><td class="empty" colspan="9">No clients registered yet.</td></tr>{{end}}</tbody></table></div></section><p class="privacy">No IP addresses, SSIDs, usernames, Kerberos principals, credentials, or diagnostic logs are collected.</p></main></body></html>`))
+var systemStatusTemplate = template.Must(template.New("system-status").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>System status — StumpfWorks Identity</title><link rel="stylesheet" href="/static/style.css"></head><body><main class="content standalone"><header class="topbar"><div><p class="eyebrow">STUMPFWORKS / IDENTITY</p><h1>System status</h1></div><a class="button secondary" href="/">← Dashboard</a></header><section class="grid status-grid"><article><span class="status-symbol">●</span><small>SERVER</small><strong>Online</strong><p>Authentication API is available.</p></article><article><span class="status-symbol">●</span><small>DATABASE</small><strong>SQLite ready</strong><p>Identity and client data stores are available.</p></article><article><span class="status-symbol">●</span><small>UPTIME</small><strong>{{.Uptime}}</strong><p>Current server process uptime.</p></article><article><span class="status-symbol">●</span><small>VERSION</small><strong>{{.Version}}</strong><p>Running LOGIN01 build and update target.</p></article></section><section class="panel"><div class="panel-head"><div><h2>Registered clients</h2><p>Health reports contain only bounded, non-personal device readiness data. Reports older than three minutes are stale.</p></div><span class="count">{{len .Clients}} registered</span></div><div class="table-wrap"><table><thead><tr><th>Client</th><th>Version</th><th>Update</th><th>Last update</th><th>Last report</th><th>Network</th><th>AD</th><th>Camera</th><th>Kerberos</th><th>Overall</th></tr></thead><tbody>{{range .Clients}}<tr><td class="mono"><strong>{{.ClientID}}</strong></td><td>{{.Version}}</td><td><span class="badge {{.UpdateClass}}">{{.Update}}</span></td><td><span class="badge {{.LastUpdateClass}}">{{.LastUpdate}}</span></td><td class="muted">{{.LastSeen}}</td><td>{{.Network}}</td><td>{{.AD}}</td><td>{{.Camera}}</td><td>{{.Kerberos}}</td><td><span class="badge {{.BadgeClass}}">{{.Health}}</span></td></tr>{{else}}<tr><td class="empty" colspan="10">No clients registered yet.</td></tr>{{end}}</tbody></table></div></section><p class="privacy">No IP addresses, SSIDs, usernames, Kerberos principals, credentials, or diagnostic logs are collected.</p></main></body></html>`))
 
 func (s *Server) systemStatusPage(w http.ResponseWriter, r *http.Request) {
 	clients, err := s.store.Clients(r.Context())

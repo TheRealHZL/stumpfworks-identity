@@ -65,7 +65,9 @@ func TestClientStatus(t *testing.T) {
 	if _, err := st.CreateClient(t.Context(), "wyse01-greeter", HashClientToken(token)); err != nil {
 		t.Fatal(err)
 	}
-	body := `{"client_id":"wyse01-greeter","version":"1.2.0-dev","network_status":"ok","ad_status":"ok","camera_status":"degraded","kerberos_status":"unknown"}`
+	updatedAt := time.Now().UTC().Truncate(time.Second)
+	bodyBytes, _ := json.Marshal(ClientStatusRequest{ClientID: "wyse01-greeter", Version: "1.2.0-dev", NetworkStatus: "ok", ADStatus: "ok", CameraStatus: "degraded", KerberosStatus: "unknown", Update: &ClientUpdateRequest{Version: "1.2.0", Status: "success", UpdatedAt: updatedAt, RollbackAvailable: true}})
+	body := string(bodyBytes)
 	request := func(given string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodPost, "/api/v1/client/status", strings.NewReader(body))
 		if given != "" {
@@ -91,7 +93,7 @@ func TestClientStatus(t *testing.T) {
 		t.Fatalf("disabled client disclosed state to wrong token: %d", w.Code)
 	}
 	c, err := st.ClientByID(t.Context(), "wyse01-greeter")
-	if err != nil || c.Version != "1.2.0-dev" || c.CameraStatus != "degraded" || c.LastSeenAt == nil {
+	if err != nil || c.Version != "1.2.0-dev" || c.CameraStatus != "degraded" || c.LastSeenAt == nil || c.LastUpdateVersion != "1.2.0" || c.LastUpdateStatus != "success" || !c.RollbackAvailable {
 		t.Fatalf("client status not persisted: %+v, %v", c, err)
 	}
 }
@@ -101,13 +103,13 @@ func TestSystemStatusClientOverview(t *testing.T) {
 	if _, err := st.CreateClient(t.Context(), "client01", HashClientToken("must-not-leak")); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpdateClientStatus(t.Context(), "client01", "1.2.0-dev", "ok", "ok", "ok", "ok"); err != nil {
+	if err := st.UpdateClientStatusWithUpdate(t.Context(), "client01", "1.2.0-dev", "ok", "ok", "ok", "ok", &database.ClientUpdate{Version: "1.2.0", Status: "success", UpdatedAt: time.Now(), RollbackAvailable: true}); err != nil {
 		t.Fatal(err)
 	}
 	r := httptest.NewRequest(http.MethodGet, "/status", nil)
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, r)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "client01") || !strings.Contains(w.Body.String(), "Healthy") {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "client01") || !strings.Contains(w.Body.String(), "Healthy") || !strings.Contains(w.Body.String(), "rollback available") {
 		t.Fatalf("status page returned %d: %s", w.Code, w.Body.String())
 	}
 	if strings.Contains(w.Body.String(), "must-not-leak") {

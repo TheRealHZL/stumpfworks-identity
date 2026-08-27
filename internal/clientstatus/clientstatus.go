@@ -15,19 +15,32 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/TheRealHZL/stumpfworks-identity/internal/clientupdate"
 )
 
 type Report struct {
-	ClientID       string `json:"client_id"`
-	Version        string `json:"version"`
-	NetworkStatus  string `json:"network_status"`
-	ADStatus       string `json:"ad_status"`
-	CameraStatus   string `json:"camera_status"`
-	KerberosStatus string `json:"kerberos_status"`
+	ClientID       string                    `json:"client_id"`
+	Version        string                    `json:"version"`
+	NetworkStatus  string                    `json:"network_status"`
+	ADStatus       string                    `json:"ad_status"`
+	CameraStatus   string                    `json:"camera_status"`
+	KerberosStatus string                    `json:"kerberos_status"`
+	Update         *clientupdate.UpdateState `json:"update,omitempty"`
 }
 
 func Collect(ctx context.Context, clientID, version string) Report {
 	return Report{ClientID: clientID, Version: version, NetworkStatus: networkStatus(), ADStatus: commandStatus(ctx, "wbinfo", "-t"), CameraStatus: cameraStatus(), KerberosStatus: kerberosStatus()}
+}
+
+func CollectWithUpdateState(ctx context.Context, clientID, version, statePath string) (Report, error) {
+	report := Collect(ctx, clientID, version)
+	state, err := clientupdate.ReadUpdateState(statePath)
+	if err != nil {
+		return Report{}, err
+	}
+	report.Update = state
+	return report, nil
 }
 
 func networkStatus() string {

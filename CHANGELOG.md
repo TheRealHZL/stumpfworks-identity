@@ -23,6 +23,8 @@ All notable changes to StumpfWorks Identity are documented here.
 - Guarded client-updater installation mode with mandatory fresh staging and rollback paths.
 - Post-rollback systemd recovery checks and explicit LightDM restart handling for approved greeter maintenance.
 - Create-only Ed25519 development key generation and signed update packaging with fixed component validation.
+- Privacy-bounded client update outcome reporting with target version, timestamp and rollback availability.
+- Admin system-status history for the last reported client update, including success or failure.
 
 ## [1.1.0] - 2026-08-26
 
