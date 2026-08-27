@@ -1,5 +1,5 @@
-.PHONY: build build-server build-agent build-pam-helper build-client-status build-linux-amd64 build-camera-macos run-server run-agent test lint clean
-build: build-server build-agent build-pam-helper build-client-status
+.PHONY: build build-server build-agent build-pam-helper build-client-status build-client-diagnostics build-linux-amd64 build-camera-macos run-server run-agent test lint clean
+build: build-server build-agent build-pam-helper build-client-status build-client-diagnostics
 build-server:
 	@mkdir -p bin
 	go build -o bin/sw-badge-server ./cmd/server
@@ -12,11 +12,15 @@ build-pam-helper:
 build-client-status:
 	@mkdir -p bin
 	go build -o bin/sw-badge-client-status ./cmd/client-status
+build-client-diagnostics:
+	@mkdir -p bin
+	go build -o bin/sw-badge-client-diagnostics ./cmd/client-diagnostics
 build-linux-amd64:
 	@mkdir -p dist/linux-amd64
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o dist/linux-amd64/sw-badge-server ./cmd/server
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o dist/linux-amd64/sw-badge-pam-helper ./cmd/pam-helper
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o dist/linux-amd64/sw-badge-client-status ./cmd/client-status
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o dist/linux-amd64/sw-badge-client-diagnostics ./cmd/client-diagnostics
 build-agent-linux:
 	@mkdir -p dist/linux-amd64
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o dist/linux-amd64/sw-badge-agent ./cmd/agent
@@ -33,5 +37,5 @@ test:
 lint:
 	go vet ./...
 clean:
-	rm -f bin/sw-badge-server bin/sw-badge-agent bin/sw-badge-pam-helper bin/sw-badge-client-status
+	rm -f bin/sw-badge-server bin/sw-badge-agent bin/sw-badge-pam-helper bin/sw-badge-client-status bin/sw-badge-client-diagnostics
 	rm -rf dist/linux-amd64

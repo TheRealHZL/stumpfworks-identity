@@ -187,6 +187,7 @@ install_client() {
 
     pam_binary=$(ask "Path to sw-badge-pam-helper Linux binary" "$project_dir/bin/sw-badge-pam-helper")
     status_binary=$(ask "Path to sw-badge-client-status Linux binary" "$project_dir/bin/sw-badge-client-status")
+    diagnostics_binary=$(ask "Path to sw-badge-client-diagnostics Linux binary" "$project_dir/bin/sw-badge-client-diagnostics")
     ca_source=$(ask "Path to trusted Homelab CA certificate")
     server_url=$(ask "LOGIN01 HTTPS URL" "https://login01.example.test:8080")
     client_id=$(ask "Unique client ID" "$(hostname -s)-greeter")
@@ -196,6 +197,7 @@ install_client() {
     client_status_token=$(ask_secret "Provisioned LOGIN01 client-status token (not displayed)")
     require_file "$pam_binary"
     require_file "$status_binary"
+    require_file "$diagnostics_binary"
     require_file "$ca_source"
     case "$server_url" in https://*) ;; *) die "server URL must use https://" ;; esac
     for pair in "$server_url|server URL" "$client_id|client ID" "$realm|realm"; do safe_value "${pair%%|*}" "${pair#*|}"; done
@@ -221,7 +223,7 @@ install_client() {
 
     rollback="/root/swbadge-client-install-rollback-$timestamp"
     install -d -m 0700 "$rollback"
-    for target in /etc/pam.d/lightdm /etc/lightdm/lightdm.conf.d/60-stumpfworks-badge.conf /usr/share/xgreeters/sw-badge-greeter.desktop /usr/local/bin/sw-badge-native-greeter /usr/local/bin/sw-badge-native-greeter-wrapper /usr/local/bin/sw-badge-camera-linux /usr/local/libexec/sw-badge-pam-helper /usr/local/libexec/sw-badge-pam-helper-wrapper /usr/local/libexec/sw-badge-client-status /etc/stumpfworks-badge/client.conf /etc/stumpfworks-badge/client-status-token /etc/systemd/system/swbadge-client-status.service /etc/systemd/system/swbadge-client-status.timer /etc/polkit-1/rules.d/49-swbadge-networkmanager.rules /etc/security/pam_mount.conf.xml; do
+    for target in /etc/pam.d/lightdm /etc/lightdm/lightdm.conf.d/60-stumpfworks-badge.conf /usr/share/xgreeters/sw-badge-greeter.desktop /usr/local/bin/sw-badge-native-greeter /usr/local/bin/sw-badge-native-greeter-wrapper /usr/local/bin/sw-badge-camera-linux /usr/local/libexec/sw-badge-pam-helper /usr/local/libexec/sw-badge-pam-helper-wrapper /usr/local/libexec/sw-badge-client-status /usr/local/sbin/sw-badge-client-diagnostics /etc/stumpfworks-badge/client.conf /etc/stumpfworks-badge/client-status-token /etc/systemd/system/swbadge-client-status.service /etc/systemd/system/swbadge-client-status.timer /etc/polkit-1/rules.d/49-swbadge-networkmanager.rules /etc/security/pam_mount.conf.xml; do
         backup_file "$target" "$rollback"
     done
 
@@ -229,6 +231,7 @@ install_client() {
     install -d -o root -g lightdm -m 0750 /etc/stumpfworks-badge
     install -o root -g root -m 0755 "$pam_binary" /usr/local/libexec/sw-badge-pam-helper
     install -o root -g root -m 0755 "$status_binary" /usr/local/libexec/sw-badge-client-status
+    install -o root -g root -m 0755 "$diagnostics_binary" /usr/local/sbin/sw-badge-client-diagnostics
     install -o root -g root -m 0755 "$project_dir/scripts/sw-badge-pam-helper-wrapper.sh" /usr/local/libexec/sw-badge-pam-helper-wrapper
     install -o root -g root -m 0755 "$project_dir/cmd/native-greeter/sw-badge-native-greeter.py" /usr/local/bin/sw-badge-native-greeter
     # A project copied from Windows may have CRLF line endings. Normalize the
@@ -280,6 +283,8 @@ EOF
 
     python3 -m py_compile /usr/local/bin/sw-badge-native-greeter
     systemctl start swbadge-client-status.service
+    install -d -o root -g root -m 0700 /var/lib/stumpfworks-badge/diagnostics
+    /usr/local/sbin/sw-badge-client-diagnostics --output "/var/lib/stumpfworks-badge/diagnostics/install-$timestamp.zip"
     if confirm "Restart LightDM now? This ends the current graphical session."; then
         systemctl restart lightdm
         systemctl --no-pager --full status lightdm

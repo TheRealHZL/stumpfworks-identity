@@ -12,6 +12,7 @@ All notable changes to StumpfWorks Identity are documented here.
 - A protected administrative client-health overview with explicit stale-report detection.
 - Local client-token rotation and reversible status-credential disabling without exposing secrets to the web interface.
 - Client/server semantic-version comparison with an update-availability indicator in the protected status page.
+- Root-only, privacy-limited client diagnostic archives and an automatic post-installation system check.
 
 ## [1.1.0] - 2026-08-26
 

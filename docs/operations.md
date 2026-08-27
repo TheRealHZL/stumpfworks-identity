@@ -37,6 +37,17 @@ klist -c /tmp/krb5cc_$(id -u alice)
 findmnt -t cifs
 ```
 
+Create a privacy-limited diagnostic archive locally as root:
+
+```bash
+set -a
+. /etc/stumpfworks-badge/client.conf
+set +a
+sw-badge-client-diagnostics --output /var/lib/stumpfworks-badge/diagnostics/manual.zip
+```
+
+The ZIP contains fixed readiness and service states only. It intentionally excludes IP addresses, SSIDs, usernames, logs, credentials, token contents, certificate contents and Kerberos principals. Review `diagnostics.json` before sharing the archive.
+
 ## Backup strategy
 
 Use scheduled Proxmox backups for DC01 and LOGIN01, stored separately from guest disks. A snapshot is not a backup. LOGIN01 also creates daily online SQLite backups under `/var/backups/stumpfworks-badge`. The maintenance service uses Python's SQLite backup API and verifies the result before publishing it. Files are root-only. Because the database is small, v1.0 does not delete old backups automatically.
