@@ -13,6 +13,10 @@ All notable changes to StumpfWorks Identity are documented here.
 - Local client-token rotation and reversible status-credential disabling without exposing secrets to the web interface.
 - Client/server semantic-version comparison with an update-availability indicator in the protected status page.
 - Root-only, privacy-limited client diagnostic archives and an automatic post-installation system check.
+- Verification-only client updater with signed manifests, fixed components, architecture checks and package-integrity limits.
+- Isolated atomic staging with fixed installation targets, a machine-readable plan and a second payload-integrity check.
+- Atomic rollback snapshot preparation with source hashes, missing-file records and symlink rejection.
+- Prevalidated, resumable rollback restoration with atomic file replacement and failure-injection tests.
 
 ## [1.1.0] - 2026-08-26
 
