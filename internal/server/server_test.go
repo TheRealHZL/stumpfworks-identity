@@ -81,6 +81,15 @@ func TestClientStatus(t *testing.T) {
 	if w := request(token); w.Code != http.StatusNoContent {
 		t.Fatalf("valid status returned %d: %s", w.Code, w.Body.String())
 	}
+	if err := st.SetClientEnabled(t.Context(), "wyse01-greeter", false); err != nil {
+		t.Fatal(err)
+	}
+	if w := request(token); w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "client_disabled") {
+		t.Fatalf("disabled client returned %d: %s", w.Code, w.Body.String())
+	}
+	if w := request("wrong"); w.Code != http.StatusUnauthorized {
+		t.Fatalf("disabled client disclosed state to wrong token: %d", w.Code)
+	}
 	c, err := st.ClientByID(t.Context(), "wyse01-greeter")
 	if err != nil || c.Version != "1.2.0-dev" || c.CameraStatus != "degraded" || c.LastSeenAt == nil {
 		t.Fatalf("client status not persisted: %+v, %v", c, err)
@@ -109,9 +118,18 @@ func TestSystemStatusClientOverview(t *testing.T) {
 func TestClientViewMarksStaleReports(t *testing.T) {
 	now := time.Now()
 	old := now.Add(-4 * time.Minute)
-	views := clientViews([]database.Client{{ClientID: "old-client", NetworkStatus: "ok", ADStatus: "ok", CameraStatus: "ok", KerberosStatus: "ok", LastSeenAt: &old}}, now)
+	views := clientViews([]database.Client{{ClientID: "old-client", Enabled: true, Version: "1.1.0", NetworkStatus: "ok", ADStatus: "ok", CameraStatus: "ok", KerberosStatus: "ok", LastSeenAt: &old}}, now, "1.2.0-dev")
 	if len(views) != 1 || views[0].Health != "Stale" || views[0].BadgeClass != "warning" {
 		t.Fatalf("unexpected stale view: %+v", views)
+	}
+}
+
+func TestClientVersionUpdateState(t *testing.T) {
+	tests := []struct{ client, server, want string }{{"1.1.0", "1.2.0-dev", "Update available"}, {"1.2.0-dev", "1.2.0-dev", "Current"}, {"1.2.0-dev", "1.2.0", "Update available"}, {"1.2.0-rc.2", "1.2.0-rc.10", "Update available"}, {"1.2.0+client", "1.2.0+server", "Current"}, {"1.3.0", "1.2.0", "Client newer"}, {"unknown", "1.2.0", "Unknown"}}
+	for _, test := range tests {
+		if got, _ := updateState(test.client, test.server); got != test.want {
+			t.Errorf("updateState(%q,%q)=%q, want %q", test.client, test.server, got, test.want)
+		}
 	}
 }
 func TestAuth(t *testing.T) {
