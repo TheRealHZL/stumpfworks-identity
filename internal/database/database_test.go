@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -92,5 +93,30 @@ func TestActiveBadgesByUserIsIsolatedAndSecretFree(t *testing.T) {
 	badges, err := store.ActiveBadgesByUser(t.Context(), alice.ID)
 	if err != nil || len(badges) != 1 || badges[0].BadgeCode != active.BadgeCode || badges[0].Description != "Primary" {
 		t.Fatalf("unexpected active badges: %+v, %v", badges, err)
+	}
+}
+
+func TestRevokeActiveBadgeForUserEnforcesOwnership(t *testing.T) {
+	store, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	alice, _ := store.CreateUser(t.Context(), "alice", "Alice", "")
+	bob, _ := store.CreateUser(t.Context(), "bob", "Bob", "")
+	badge, _ := store.CreateBadge(t.Context(), alice.ID, "secret", "Primary")
+	if _, err = store.RevokeActiveBadgeForUser(t.Context(), badge.ID, bob.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("foreign badge revoke returned %v", err)
+	}
+	current, _ := store.GetBadge(t.Context(), badge.ID)
+	if !current.Enabled {
+		t.Fatal("foreign user revoked badge")
+	}
+	revoked, err := store.RevokeActiveBadgeForUser(t.Context(), badge.ID, alice.ID)
+	if err != nil || revoked.BadgeCode != badge.BadgeCode {
+		t.Fatalf("owner revoke failed: %+v, %v", revoked, err)
+	}
+	if _, err = store.RevokeActiveBadgeForUser(t.Context(), badge.ID, alice.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("second revoke returned %v", err)
 	}
 }

@@ -232,6 +232,30 @@ func (s *Store) ActiveBadgesByUser(ctx context.Context, userID int64) ([]UserBad
 	}
 	return out, rows.Err()
 }
+func (s *Store) RevokeActiveBadgeForUser(ctx context.Context, badgeID, userID int64) (UserBadge, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return UserBadge{}, err
+	}
+	defer tx.Rollback()
+	var b UserBadge
+	err = tx.QueryRowContext(ctx, `SELECT id,badge_code,description,created_at,last_used_at FROM badges WHERE id=? AND user_id=? AND enabled=1`, badgeID, userID).Scan(&b.ID, &b.BadgeCode, &b.Description, &b.CreatedAt, &b.LastUsedAt)
+	if err != nil {
+		return UserBadge{}, err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE badges SET enabled=0,revoked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? AND enabled=1`, badgeID, userID)
+	if err != nil {
+		return UserBadge{}, err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil || changed != 1 {
+		return UserBadge{}, sql.ErrNoRows
+	}
+	if err = tx.Commit(); err != nil {
+		return UserBadge{}, err
+	}
+	return b, nil
+}
 func (s *Store) Revoke(ctx context.Context, id int64) error {
 	_, e := s.DB.ExecContext(ctx, `UPDATE badges SET enabled=0,revoked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?`, id)
 	return e

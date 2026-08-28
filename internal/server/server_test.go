@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -313,5 +314,39 @@ func TestSelfServicePIN(t *testing.T) {
 	s.Handler().ServeHTTP(w, r)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("invalid CSRF returned %d", w.Code)
+	}
+
+	form = strings.NewReader("_csrf=" + sessions.CSRF(cookie.Value))
+	r = httptest.NewRequest("POST", "/self-service/badges/"+strconv.FormatInt(bobBadge.ID, 10)+"/revoke", form)
+	r.SetPathValue("id", strconv.FormatInt(bobBadge.ID, 10))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/self-service?error=badge_unavailable" {
+		t.Fatalf("foreign badge revoke returned %d: %s", w.Code, w.Header().Get("Location"))
+	}
+	foreign, _ := st.GetBadge(t.Context(), bobBadge.ID)
+	if !foreign.Enabled {
+		t.Fatal("self-service revoked another user's badge")
+	}
+
+	form = strings.NewReader("_csrf=" + sessions.CSRF(cookie.Value))
+	r = httptest.NewRequest("POST", "/self-service/badges/"+strconv.FormatInt(aliceBadge.ID, 10)+"/revoke", form)
+	r.SetPathValue("id", strconv.FormatInt(aliceBadge.ID, 10))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/self-service?status=badge_revoked" {
+		t.Fatalf("own badge revoke returned %d: %s", w.Code, w.Header().Get("Location"))
+	}
+	revoked, _ := st.GetBadge(t.Context(), aliceBadge.ID)
+	if revoked.Enabled {
+		t.Fatal("self-service did not revoke own badge")
+	}
+	audits, _ := st.Audits(t.Context())
+	if len(audits) == 0 || audits[0].EventType != "badge_self_service_revoked" || audits[0].BadgeID != aliceBadge.BadgeCode || audits[0].Username != "alice" {
+		t.Fatalf("missing self-service revoke audit: %+v", audits)
 	}
 }
