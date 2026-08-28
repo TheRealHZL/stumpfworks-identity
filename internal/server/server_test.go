@@ -100,6 +100,9 @@ func TestClientStatus(t *testing.T) {
 
 func TestSystemStatusClientOverview(t *testing.T) {
 	s, st := testServer(t)
+	if err := s.ConfigureClientTargetVersion("1.2.0-dev"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := st.CreateClient(t.Context(), "client01", HashClientToken("must-not-leak")); err != nil {
 		t.Fatal(err)
 	}
@@ -109,11 +112,18 @@ func TestSystemStatusClientOverview(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/status", nil)
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, r)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "client01") || !strings.Contains(w.Body.String(), "Healthy") || !strings.Contains(w.Body.String(), "rollback available") {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "client01") || !strings.Contains(w.Body.String(), "Healthy") || !strings.Contains(w.Body.String(), "rollback available") || !strings.Contains(w.Body.String(), "CLIENT TARGET") || !strings.Contains(w.Body.String(), "Current") {
 		t.Fatalf("status page returned %d: %s", w.Code, w.Body.String())
 	}
 	if strings.Contains(w.Body.String(), "must-not-leak") {
 		t.Fatal("client token leaked into status page")
+	}
+}
+
+func TestRejectsInvalidClientTargetVersion(t *testing.T) {
+	s, _ := testServer(t)
+	if err := s.ConfigureClientTargetVersion("latest"); err == nil {
+		t.Fatal("invalid target version accepted")
 	}
 }
 

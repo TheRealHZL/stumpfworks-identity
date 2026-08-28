@@ -27,19 +27,20 @@ import (
 )
 
 type Server struct {
-	store         *database.Store
-	log           *slog.Logger
-	started       time.Time
-	mux           *http.ServeMux
-	dir           directory.Directory
-	sessions      *adminauth.Sessions
-	protect       bool
-	loginMu       sync.Mutex
-	loginAttempts map[string][]time.Time
-	pinAttempts   map[string][]time.Time
-	grantMu       sync.Mutex
-	grants        map[string]loginGrant
-	pkinit        *PKINITIssuer
+	store               *database.Store
+	log                 *slog.Logger
+	started             time.Time
+	mux                 *http.ServeMux
+	dir                 directory.Directory
+	sessions            *adminauth.Sessions
+	protect             bool
+	loginMu             sync.Mutex
+	loginAttempts       map[string][]time.Time
+	pinAttempts         map[string][]time.Time
+	grantMu             sync.Mutex
+	grants              map[string]loginGrant
+	pkinit              *PKINITIssuer
+	clientTargetVersion string
 }
 type loginGrant struct {
 	Username, ClientID string
@@ -61,9 +62,20 @@ type AuthResponse struct {
 }
 
 func New(st *database.Store, l *slog.Logger) *Server {
-	s := &Server{store: st, log: l, started: time.Now(), mux: http.NewServeMux(), loginAttempts: map[string][]time.Time{}, pinAttempts: map[string][]time.Time{}, grants: map[string]loginGrant{}}
+	s := &Server{store: st, log: l, started: time.Now(), mux: http.NewServeMux(), loginAttempts: map[string][]time.Time{}, pinAttempts: map[string][]time.Time{}, grants: map[string]loginGrant{}, clientTargetVersion: version.Version}
 	s.routes()
 	return s
+}
+func (s *Server) ConfigureClientTargetVersion(target string) error {
+	if target == "" {
+		s.clientTargetVersion = version.Version
+		return nil
+	}
+	if _, ok := parseSemanticVersion(target); !ok {
+		return errors.New("invalid client target version")
+	}
+	s.clientTargetVersion = target
+	return nil
 }
 func NewProtected(st *database.Store, l *slog.Logger, d directory.Directory, sessions *adminauth.Sessions) *Server {
 	s := New(st, l)

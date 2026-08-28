@@ -136,6 +136,10 @@ func main() {
 	} else {
 		srv = app.New(st, log)
 	}
+	if err := srv.ConfigureClientTargetVersion(cfg.ClientTargetVersion); err != nil {
+		slog.Error("client target version configuration failed", "error", err)
+		os.Exit(1)
+	}
 	if cfg.PKINITEnabled {
 		issuer, err := app.LoadPKINITIssuer(cfg.PKINITCACertFile, cfg.PKINITCAKeyFile, cfg.PKINITRealm, 10*time.Minute)
 		if err != nil {

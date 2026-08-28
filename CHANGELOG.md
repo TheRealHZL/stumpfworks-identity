@@ -26,6 +26,7 @@ All notable changes to StumpfWorks Identity are documented here.
 - Privacy-bounded client update outcome reporting with target version, timestamp and rollback availability.
 - Admin system-status history for the last reported client update, including success or failure.
 - Greeter maintenance now rebinds the current persistent `swbadge-vnc.service` instead of the retired transient unit.
+- Separate configurable managed-client target version from the running LOGIN01 build version.
 
 ## [1.1.0] - 2026-08-26
 
