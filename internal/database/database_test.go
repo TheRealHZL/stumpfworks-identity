@@ -74,3 +74,23 @@ func TestRotateAndDisableClient(t *testing.T) {
 		t.Fatalf("unexpected client state: %+v, %v", c, err)
 	}
 }
+
+func TestActiveBadgesByUserIsIsolatedAndSecretFree(t *testing.T) {
+	store, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	alice, _ := store.CreateUser(t.Context(), "alice", "Alice", "")
+	bob, _ := store.CreateUser(t.Context(), "bob", "Bob", "")
+	active, _ := store.CreateBadge(t.Context(), alice.ID, "alice-secret", "Primary")
+	revoked, _ := store.CreateBadge(t.Context(), alice.ID, "revoked-secret", "Old")
+	_, _ = store.CreateBadge(t.Context(), bob.ID, "bob-secret", "Bob badge")
+	if err = store.Revoke(t.Context(), revoked.ID); err != nil {
+		t.Fatal(err)
+	}
+	badges, err := store.ActiveBadgesByUser(t.Context(), alice.ID)
+	if err != nil || len(badges) != 1 || badges[0].BadgeCode != active.BadgeCode || badges[0].Description != "Primary" {
+		t.Fatalf("unexpected active badges: %+v, %v", badges, err)
+	}
+}

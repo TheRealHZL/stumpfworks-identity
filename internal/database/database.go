@@ -40,6 +40,13 @@ type Badge struct {
 	LastUsedAt  sql.NullTime `json:"-"`
 	RevokedAt   sql.NullTime `json:"-"`
 }
+type UserBadge struct {
+	ID          int64
+	BadgeCode   string
+	Description string
+	CreatedAt   time.Time
+	LastUsedAt  sql.NullTime
+}
 type Audit struct {
 	ID                                     int64 `json:"id"`
 	EventType, BadgeID, Username, ClientID string
@@ -204,6 +211,22 @@ func (s *Store) Badges(ctx context.Context) ([]Badge, error) {
 		var b Badge
 		if e = rows.Scan(&b.ID, &b.BadgeCode, &b.UserID, &b.Username, &b.DisplayName, &b.PINHash, &b.TokenHash, &b.Enabled, &b.Description, &b.CreatedAt, &b.LastUsedAt, &b.RevokedAt); e != nil {
 			return nil, e
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+func (s *Store) ActiveBadgesByUser(ctx context.Context, userID int64) ([]UserBadge, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,badge_code,description,created_at,last_used_at FROM badges WHERE user_id=? AND enabled=1 ORDER BY id DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []UserBadge{}
+	for rows.Next() {
+		var b UserBadge
+		if err = rows.Scan(&b.ID, &b.BadgeCode, &b.Description, &b.CreatedAt, &b.LastUsedAt); err != nil {
+			return nil, err
 		}
 		out = append(out, b)
 	}

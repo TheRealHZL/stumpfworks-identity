@@ -4,6 +4,10 @@ All notable changes to StumpfWorks Identity are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- Self-service users can view only their own active badges with bounded issue and last-use metadata; badge tokens and other users' badges remain inaccessible.
+
 ## [1.2.1] - 2026-08-28
 
 ### Added

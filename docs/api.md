@@ -30,4 +30,4 @@ The grant works only once, before expiry and for its client. The response contai
 
 ## Administration and self-service
 
-User, badge, directory and QR operations require a signed administrator session and CSRF for writes. `/self-service` authenticates a normal user over LDAPS and permits only that identity's PIN update. Its session cannot act as an administrator and expires after 15 minutes.
+User, badge, directory and QR operations require a signed administrator session and CSRF for writes. `/self-service` authenticates a normal user over LDAPS, permits only that identity's PIN update and shows only active badges assigned to that local identity. The bounded badge view contains the badge ID, optional description, issue date and last-use date; it never contains token hashes or another user's badges. Its session cannot act as an administrator and expires after 15 minutes.

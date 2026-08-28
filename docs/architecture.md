@@ -21,7 +21,7 @@ The result is a real user TGT. No synthetic or stored AD password is involved.
 
 ## Web authentication
 
-Administrator sessions require the configured AD administrator group. Self-service accepts a valid AD user but can update only that identity's SWBA PIN. Signed session tokens carry distinct `admin` and `self-service` audiences and cannot be exchanged. Browser writes use secure, HTTP-only, SameSite strict cookies and CSRF tokens. Self-service expires after 15 minutes.
+Administrator sessions require the configured AD administrator group. Self-service accepts a valid AD user but can update only that identity's SWBA PIN and read a bounded list of active badges selected by the authenticated local user ID. Signed session tokens carry distinct `admin` and `self-service` audiences and cannot be exchanged. Browser writes use secure, HTTP-only, SameSite strict cookies and CSRF tokens. Self-service expires after 15 minutes.
 
 ## Trust boundaries
 

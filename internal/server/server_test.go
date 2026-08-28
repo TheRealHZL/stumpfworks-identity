@@ -259,6 +259,10 @@ func TestSelfServicePIN(t *testing.T) {
 	_, st := testServer(t)
 	sessions, _ := adminauth.NewSessions("01234567890123456789012345678901", time.Hour)
 	s := NewProtected(st, slog.New(slog.NewTextHandler(io.Discard, nil)), fakeDirectory{}, sessions)
+	alice, _ := st.CreateUser(t.Context(), "alice", "Alice Example", "CN=Alice Example,DC=example")
+	bob, _ := st.CreateUser(t.Context(), "bob", "Bob Example", "CN=Bob Example,DC=example")
+	aliceBadge, _ := st.CreateBadge(t.Context(), alice.ID, "alice-token-must-not-leak", "Primary badge")
+	bobBadge, _ := st.CreateBadge(t.Context(), bob.ID, "bob-token-must-not-leak", "Other user badge")
 
 	form := strings.NewReader("username=alice&password=correct")
 	r := httptest.NewRequest("POST", "/self-service/login", form)
@@ -281,6 +285,10 @@ func TestSelfServicePIN(t *testing.T) {
 	s.Handler().ServeHTTP(w, r)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Hello, Alice Example") {
 		t.Fatalf("authenticated self-service page returned %d: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, aliceBadge.BadgeCode) || strings.Contains(body, bobBadge.BadgeCode) || strings.Contains(body, "must-not-leak") {
+		t.Fatalf("self-service badge isolation failed: %s", body)
 	}
 
 	form = strings.NewReader("pin=5831&pin_confirm=5831&_csrf=" + sessions.CSRF(cookie.Value))
