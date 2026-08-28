@@ -37,14 +37,14 @@ Example dry run:
 sw-badge-client-updater \
   --dry-run \
   --package stumpfworks-client-1.2.1-linux-amd64.zip \
-  --public-key /etc/stumpfworks-badge/update-release.pub
+  --public-key /etc/stumpfworks-badge/client-update.pub
 ```
 
 An optional `--stage-dir` extracts verified components into a new mode-restricted directory and writes `stage-plan.json`. Existing directories are never overwritten. The plan contains only fixed component-to-target mappings compiled into the updater, expected modes and whether a future installation would require a LightDM restart. Payload hashes are checked again while staging to close the verification-to-extraction gap. Staging never writes to an installation target.
 
 Rollback preparation uses the fixed stage plan to copy only known existing target files into a new mode `0700` directory. Each saved file is mode `0600`, hashed, size-limited and recorded in `rollback.json`; targets that did not previously exist are recorded explicitly. Symlinks, special files, duplicate components, changed target mappings and existing rollback directories are rejected.
 
-The internal restore implementation validates the complete manifest and every backup before changing any target. Existing files are restored through same-directory atomic replacements; files recorded as previously absent are removed. A restore can be rerun safely after an injected mid-restore failure. Restore is not exposed through the CLI yet, and package installation remains disabled until installation failure tests invoke this restore automatically.
+The internal restore implementation validates the complete manifest and every backup before changing any target. Existing files are restored through same-directory atomic replacements; files recorded as previously absent are removed. A restore can be rerun safely after an injected mid-restore failure. Installation failures and failed health gates invoke this restore automatically; there is deliberately no broad manual restore command that accepts arbitrary targets.
 
 The installation transaction revalidates the complete staged payload, creates the rollback snapshot, prepares replacement files and atomically replaces fixed targets. Any preparation or application error invokes rollback automatically. A successful transaction requires a non-optional post-install health callback; a failed health result restores the old files after proving that the new files were visible to the check. Failure-injection tests also prove that a tampered stage is rejected before a rollback directory or target change is created.
 
@@ -56,7 +56,7 @@ Installation requires fresh, distinct absolute directories. Neither directory ma
 sw-badge-client-updater \
   --install \
   --package stumpfworks-client-1.2.1-linux-amd64.zip \
-  --public-key /etc/stumpfworks-badge/update-release.pub \
+  --public-key /etc/stumpfworks-badge/client-update.pub \
   --stage-dir /var/lib/stumpfworks-badge/updates/1.2.1-stage \
   --rollback-dir /var/backups/stumpfworks-badge/client-1.2.1
 ```
@@ -64,5 +64,7 @@ sw-badge-client-updater \
 The install mode stages and revalidates the package, creates the complete rollback snapshot before replacing files, and runs component-aware systemd checks. If installation or health validation fails, all files are restored and systemd health recovery runs against the restored state. A greeter component is rejected unless `--allow-lightdm-maintenance` is supplied; with that explicit authorization LightDM is restarted after installation and again after any automatic rollback. The persistent `swbadge-vnc.service` is rebound to the new X display with `try-restart`; an inactive service remains inactive. The normal password fallback must be checked during a separately approved production maintenance test.
 
 Before the mandatory service report, the updater atomically writes `/var/lib/stumpfworks-badge/update-state.json`. The bounded state contains only the target release, `success` or `failed`, the UTC timestamp and whether the rollback snapshot exists. The client status reporter sends this optional object with its normal health report. LOGIN01 rejects malformed versions, unknown results and unreasonable timestamps, stores the last accepted outcome and displays it in the registered-client overview. Clients without updater state remain compatible and show “No update reported”.
+
+The guided client installer installs the updater and the selected Ed25519 public key as `/etc/stumpfworks-badge/client-update.pub`. It never asks for or copies a private signing key. The installer verifies the updater version, NetworkManager availability and an immediate status report before optionally restarting LightDM.
 
 The first real WYSE01 update test on 27 August 2026 installed only `sw-badge-client-status` from `1.2.0-dev` to signed development release `1.2.0`. The installed payload hash matched the signed artifact, the timer and LightDM remained active, LOGIN01 received version `1.2.0` with all health fields `ok`, and the real rollback snapshot restored successfully in a local simulated root without changing WYSE01.

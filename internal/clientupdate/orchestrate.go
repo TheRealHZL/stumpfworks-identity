@@ -29,6 +29,25 @@ func PostRollbackRecovery(parent context.Context, plan StagePlan, runner Command
 	return serviceHealthCheck(parent, plan, runner, RequiresLightDMMaintenance(plan))
 }
 
+// UpdateHealthCallbacks couples the transactional health checks to the bounded
+// state reported by the client-status agent. A failed installation records its
+// failure only after the previous files have been restored.
+func UpdateHealthCallbacks(parent context.Context, plan StagePlan, runner CommandRunner, statePath string, installedAt time.Time) (func() error, func() error) {
+	health := func() error {
+		if err := WriteUpdateState(statePath, UpdateState{Version: plan.ReleaseVersion, Status: "success", UpdatedAt: installedAt, RollbackAvailable: true}); err != nil {
+			return err
+		}
+		return PostInstallHealthCheck(parent, plan, runner)()
+	}
+	recovery := func() error {
+		if err := WriteUpdateState(statePath, UpdateState{Version: plan.ReleaseVersion, Status: "failed", UpdatedAt: installedAt, RollbackAvailable: true}); err != nil {
+			return err
+		}
+		return PostRollbackRecovery(parent, plan, runner)()
+	}
+	return health, recovery
+}
+
 func serviceHealthCheck(parent context.Context, plan StagePlan, runner CommandRunner, restartLightDM bool) func() error {
 	return func() error {
 		if runner == nil {

@@ -3,13 +3,36 @@ package clientupdate
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakeRunner struct {
 	calls  []string
 	failAt string
+}
+
+func TestUpdateHealthCallbacksRecordSuccessAndRecoveredFailure(t *testing.T) {
+	plan := StagePlan{ReleaseVersion: "1.2.1"}
+	statePath := filepath.Join(t.TempDir(), "update-state.json")
+	installedAt := time.Unix(100, 0).UTC()
+	health, recovery := UpdateHealthCallbacks(context.Background(), plan, &fakeRunner{}, statePath, installedAt)
+	if err := health(); err != nil {
+		t.Fatal(err)
+	}
+	state, err := ReadUpdateState(statePath)
+	if err != nil || state == nil || state.Status != "success" || state.Version != plan.ReleaseVersion {
+		t.Fatalf("unexpected successful update state: %+v, %v", state, err)
+	}
+	if err = recovery(); err != nil {
+		t.Fatal(err)
+	}
+	state, err = ReadUpdateState(statePath)
+	if err != nil || state == nil || state.Status != "failed" || !state.RollbackAvailable {
+		t.Fatalf("unexpected recovered failure state: %+v, %v", state, err)
+	}
 }
 
 func (r *fakeRunner) Run(_ context.Context, name string, args ...string) error {

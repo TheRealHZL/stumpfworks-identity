@@ -44,18 +44,7 @@ func main() {
 		}
 		runner := clientupdate.ExecRunner{}
 		installedAt := time.Now().UTC()
-		health := func() error {
-			if stateErr := clientupdate.WriteUpdateState(clientupdate.DefaultStatePath, clientupdate.UpdateState{Version: plan.ReleaseVersion, Status: "success", UpdatedAt: installedAt, RollbackAvailable: true}); stateErr != nil {
-				return stateErr
-			}
-			return clientupdate.PostInstallHealthCheck(context.Background(), plan, runner)()
-		}
-		recovery := func() error {
-			if stateErr := clientupdate.WriteUpdateState(clientupdate.DefaultStatePath, clientupdate.UpdateState{Version: plan.ReleaseVersion, Status: "failed", UpdatedAt: installedAt, RollbackAvailable: true}); stateErr != nil {
-				return stateErr
-			}
-			return clientupdate.PostRollbackRecovery(context.Background(), plan, runner)()
-		}
+		health, recovery := clientupdate.UpdateHealthCallbacks(context.Background(), plan, runner, clientupdate.DefaultStatePath, installedAt)
 		if err = clientupdate.InstallStaged("/", *stageDir, *rollbackDir, installedAt, *allowLightDMMaintenance, health, recovery); err != nil {
 			fatal(err.Error())
 		}
