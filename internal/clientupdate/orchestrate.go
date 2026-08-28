@@ -62,7 +62,7 @@ func serviceHealthCheck(parent context.Context, plan StagePlan, runner CommandRu
 			if err := runner.Run(ctx, "systemctl", "restart", "lightdm.service"); err != nil {
 				return fmt.Errorf("LightDM restart: %w", err)
 			}
-			if err := runner.Run(ctx, "systemctl", "try-restart", "swbadge-vnc-lan-live.service"); err != nil {
+			if err := runner.Run(ctx, "systemctl", "try-restart", "swbadge-vnc.service"); err != nil {
 				return fmt.Errorf("VNC rebind: %w", err)
 			}
 		}

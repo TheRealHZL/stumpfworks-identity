@@ -25,6 +25,7 @@ All notable changes to StumpfWorks Identity are documented here.
 - Create-only Ed25519 development key generation and signed update packaging with fixed component validation.
 - Privacy-bounded client update outcome reporting with target version, timestamp and rollback availability.
 - Admin system-status history for the last reported client update, including success or failure.
+- Greeter maintenance now rebinds the current persistent `swbadge-vnc.service` instead of the retired transient unit.
 
 ## [1.1.0] - 2026-08-26
 

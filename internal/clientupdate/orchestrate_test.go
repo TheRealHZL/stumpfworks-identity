@@ -55,7 +55,7 @@ func TestGreeterHealthRestartsLightDM(t *testing.T) {
 	if err := PostInstallHealthCheck(context.Background(), plan, runner)(); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"systemctl restart lightdm.service", "systemctl try-restart swbadge-vnc-lan-live.service", "systemctl is-active lightdm.service"}
+	want := []string{"systemctl restart lightdm.service", "systemctl try-restart swbadge-vnc.service", "systemctl is-active lightdm.service"}
 	if strings.Join(runner.calls, "|") != strings.Join(want, "|") {
 		t.Fatalf("unexpected commands: %v", runner.calls)
 	}
