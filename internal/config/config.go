@@ -13,6 +13,7 @@ type Config struct {
 	SessionSecret                                                                             string
 	SessionSecretFile                                                                         string
 	PKINITCACertFile, PKINITCAKeyFile, PKINITRealm                                            string
+	ClientTargetVersion                                                                       string
 	DirectoryEnabled, PKINITEnabled, Demo                                                     bool
 }
 
@@ -84,6 +85,8 @@ func Load(path string) (Config, error) {
 				c.PKINITCAKeyFile = val
 			case "pkinit.realm":
 				c.PKINITRealm = val
+			case "updates.client_target_version":
+				c.ClientTargetVersion = val
 			}
 		}
 		if err := s.Err(); err != nil {
@@ -113,6 +116,7 @@ func Load(path string) (Config, error) {
 	set("SWBADGE_PKINIT_CA_CERT_FILE", &c.PKINITCACertFile)
 	set("SWBADGE_PKINIT_CA_KEY_FILE", &c.PKINITCAKeyFile)
 	set("SWBADGE_PKINIT_REALM", &c.PKINITRealm)
+	set("SWBADGE_CLIENT_TARGET_VERSION", &c.ClientTargetVersion)
 	if v, ok := os.LookupEnv("SWBADGE_DIRECTORY_ENABLED"); ok {
 		c.DirectoryEnabled = v == "true"
 	}

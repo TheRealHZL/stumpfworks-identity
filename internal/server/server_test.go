@@ -58,6 +58,92 @@ func TestHealth(t *testing.T) {
 		t.Fatal(w.Code, w.Body.String())
 	}
 }
+
+func TestClientStatus(t *testing.T) {
+	s, st := testServer(t)
+	token := "a-long-random-client-token"
+	if _, err := st.CreateClient(t.Context(), "wyse01-greeter", HashClientToken(token)); err != nil {
+		t.Fatal(err)
+	}
+	updatedAt := time.Now().UTC().Truncate(time.Second)
+	bodyBytes, _ := json.Marshal(ClientStatusRequest{ClientID: "wyse01-greeter", Version: "1.2.0-dev", NetworkStatus: "ok", ADStatus: "ok", CameraStatus: "degraded", KerberosStatus: "unknown", Update: &ClientUpdateRequest{Version: "1.2.0", Status: "success", UpdatedAt: updatedAt, RollbackAvailable: true}})
+	body := string(bodyBytes)
+	request := func(given string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/client/status", strings.NewReader(body))
+		if given != "" {
+			r.Header.Set("Authorization", "Bearer "+given)
+		}
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, r)
+		return w
+	}
+	if w := request("wrong"); w.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong token returned %d", w.Code)
+	}
+	if w := request(token); w.Code != http.StatusNoContent {
+		t.Fatalf("valid status returned %d: %s", w.Code, w.Body.String())
+	}
+	if err := st.SetClientEnabled(t.Context(), "wyse01-greeter", false); err != nil {
+		t.Fatal(err)
+	}
+	if w := request(token); w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "client_disabled") {
+		t.Fatalf("disabled client returned %d: %s", w.Code, w.Body.String())
+	}
+	if w := request("wrong"); w.Code != http.StatusUnauthorized {
+		t.Fatalf("disabled client disclosed state to wrong token: %d", w.Code)
+	}
+	c, err := st.ClientByID(t.Context(), "wyse01-greeter")
+	if err != nil || c.Version != "1.2.0-dev" || c.CameraStatus != "degraded" || c.LastSeenAt == nil || c.LastUpdateVersion != "1.2.0" || c.LastUpdateStatus != "success" || !c.RollbackAvailable {
+		t.Fatalf("client status not persisted: %+v, %v", c, err)
+	}
+}
+
+func TestSystemStatusClientOverview(t *testing.T) {
+	s, st := testServer(t)
+	if err := s.ConfigureClientTargetVersion("1.2.0-dev"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateClient(t.Context(), "client01", HashClientToken("must-not-leak")); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateClientStatusWithUpdate(t.Context(), "client01", "1.2.0-dev", "ok", "ok", "ok", "ok", &database.ClientUpdate{Version: "1.2.0", Status: "success", UpdatedAt: time.Now(), RollbackAvailable: true}); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodGet, "/status", nil)
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "client01") || !strings.Contains(w.Body.String(), "Healthy") || !strings.Contains(w.Body.String(), "rollback available") || !strings.Contains(w.Body.String(), "CLIENT TARGET") || !strings.Contains(w.Body.String(), "Current") {
+		t.Fatalf("status page returned %d: %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "must-not-leak") {
+		t.Fatal("client token leaked into status page")
+	}
+}
+
+func TestRejectsInvalidClientTargetVersion(t *testing.T) {
+	s, _ := testServer(t)
+	if err := s.ConfigureClientTargetVersion("latest"); err == nil {
+		t.Fatal("invalid target version accepted")
+	}
+}
+
+func TestClientViewMarksStaleReports(t *testing.T) {
+	now := time.Now()
+	old := now.Add(-4 * time.Minute)
+	views := clientViews([]database.Client{{ClientID: "old-client", Enabled: true, Version: "1.1.0", NetworkStatus: "ok", ADStatus: "ok", CameraStatus: "ok", KerberosStatus: "ok", LastSeenAt: &old}}, now, "1.2.0-dev")
+	if len(views) != 1 || views[0].Health != "Stale" || views[0].BadgeClass != "warning" {
+		t.Fatalf("unexpected stale view: %+v", views)
+	}
+}
+
+func TestClientVersionUpdateState(t *testing.T) {
+	tests := []struct{ client, server, want string }{{"1.1.0", "1.2.0-dev", "Update available"}, {"1.2.0-dev", "1.2.0-dev", "Current"}, {"1.2.0-dev", "1.2.0", "Update available"}, {"1.2.0-rc.2", "1.2.0-rc.10", "Update available"}, {"1.2.0+client", "1.2.0+server", "Current"}, {"1.3.0", "1.2.0", "Client newer"}, {"unknown", "1.2.0", "Unknown"}}
+	for _, test := range tests {
+		if got, _ := updateState(test.client, test.server); got != test.want {
+			t.Errorf("updateState(%q,%q)=%q, want %q", test.client, test.server, got, test.want)
+		}
+	}
+}
 func TestAuth(t *testing.T) {
 	s, st := testServer(t)
 	u, e := st.CreateUser(t.Context(), "alice", "Alice Example", "")

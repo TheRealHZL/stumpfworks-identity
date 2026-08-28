@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"flag"
 	"fmt"
 	adminauth "github.com/TheRealHZL/stumpfworks-identity/internal/auth"
@@ -21,6 +23,10 @@ func main() {
 	cfgPath := flag.String("config", "", "YAML configuration file")
 	show := flag.Bool("version", false, "show version")
 	checkDirectory := flag.Bool("check-directory", false, "verify configured directory connection and exit")
+	registerClient := flag.String("register-client", "", "provision a client ID and print its token once")
+	rotateClient := flag.String("rotate-client-token", "", "replace a client's status token and print the new token once")
+	disableClient := flag.String("disable-client", "", "disable a client's status credential")
+	enableClient := flag.String("enable-client", "", "enable a client's status credential")
 	flag.Parse()
 	if *show {
 		fmt.Println("sw-badge-server", version.Version)
@@ -51,6 +57,66 @@ func main() {
 		os.Exit(1)
 	}
 	defer st.Close()
+	clientActions := 0
+	for _, value := range []string{*registerClient, *rotateClient, *disableClient, *enableClient} {
+		if value != "" {
+			clientActions++
+		}
+	}
+	if clientActions > 1 {
+		slog.Error("select only one client management action")
+		os.Exit(1)
+	}
+	clientID := *registerClient
+	if clientID == "" {
+		clientID = *rotateClient
+	}
+	if clientID == "" {
+		clientID = *disableClient
+	}
+	if clientID == "" {
+		clientID = *enableClient
+	}
+	if clientID != "" {
+		valid := len(clientID) > 0 && len(clientID) <= 64
+		for _, r := range clientID {
+			if !(r == '-' || r == '_' || r == '.' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+				valid = false
+			}
+		}
+		if !valid {
+			slog.Error("client ID must contain only letters, digits, dot, dash, or underscore")
+			os.Exit(1)
+		}
+		if *disableClient != "" || *enableClient != "" {
+			enabled := *enableClient != ""
+			if err := st.SetClientEnabled(context.Background(), clientID, enabled); err != nil {
+				slog.Error("client state change failed", "error", err)
+				os.Exit(1)
+			}
+			fmt.Printf("client_id=%s\nenabled=%t\n", clientID, enabled)
+			return
+		}
+		raw := make([]byte, 32)
+		if _, err := rand.Read(raw); err != nil {
+			slog.Error("client token generation failed", "error", err)
+			os.Exit(1)
+		}
+		token := base64.RawURLEncoding.EncodeToString(raw)
+		if *registerClient != "" {
+			if _, err := st.CreateClient(context.Background(), clientID, app.HashClientToken(token)); err != nil {
+				slog.Error("client registration failed", "error", err)
+				os.Exit(1)
+			}
+		} else {
+			if err := st.RotateClientToken(context.Background(), clientID, app.HashClientToken(token)); err != nil {
+				slog.Error("client token rotation failed", "error", err)
+				os.Exit(1)
+			}
+		}
+		fmt.Printf("client_id=%s\ntoken=%s\n", clientID, token)
+		return
+	}
 	if cfg.Demo {
 		seed(st)
 	}
@@ -69,6 +135,10 @@ func main() {
 		srv = app.NewProtected(st, log, configuredDirectory, sessions)
 	} else {
 		srv = app.New(st, log)
+	}
+	if err := srv.ConfigureClientTargetVersion(cfg.ClientTargetVersion); err != nil {
+		slog.Error("client target version configuration failed", "error", err)
+		os.Exit(1)
 	}
 	if cfg.PKINITEnabled {
 		issuer, err := app.LoadPKINITIssuer(cfg.PKINITCACertFile, cfg.PKINITCAKeyFile, cfg.PKINITRealm, 10*time.Minute)

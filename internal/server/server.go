@@ -27,19 +27,20 @@ import (
 )
 
 type Server struct {
-	store         *database.Store
-	log           *slog.Logger
-	started       time.Time
-	mux           *http.ServeMux
-	dir           directory.Directory
-	sessions      *adminauth.Sessions
-	protect       bool
-	loginMu       sync.Mutex
-	loginAttempts map[string][]time.Time
-	pinAttempts   map[string][]time.Time
-	grantMu       sync.Mutex
-	grants        map[string]loginGrant
-	pkinit        *PKINITIssuer
+	store               *database.Store
+	log                 *slog.Logger
+	started             time.Time
+	mux                 *http.ServeMux
+	dir                 directory.Directory
+	sessions            *adminauth.Sessions
+	protect             bool
+	loginMu             sync.Mutex
+	loginAttempts       map[string][]time.Time
+	pinAttempts         map[string][]time.Time
+	grantMu             sync.Mutex
+	grants              map[string]loginGrant
+	pkinit              *PKINITIssuer
+	clientTargetVersion string
 }
 type loginGrant struct {
 	Username, ClientID string
@@ -61,9 +62,20 @@ type AuthResponse struct {
 }
 
 func New(st *database.Store, l *slog.Logger) *Server {
-	s := &Server{store: st, log: l, started: time.Now(), mux: http.NewServeMux(), loginAttempts: map[string][]time.Time{}, pinAttempts: map[string][]time.Time{}, grants: map[string]loginGrant{}}
+	s := &Server{store: st, log: l, started: time.Now(), mux: http.NewServeMux(), loginAttempts: map[string][]time.Time{}, pinAttempts: map[string][]time.Time{}, grants: map[string]loginGrant{}, clientTargetVersion: version.Version}
 	s.routes()
 	return s
+}
+func (s *Server) ConfigureClientTargetVersion(target string) error {
+	if target == "" {
+		s.clientTargetVersion = version.Version
+		return nil
+	}
+	if _, ok := parseSemanticVersion(target); !ok {
+		return errors.New("invalid client target version")
+	}
+	s.clientTargetVersion = target
+	return nil
 }
 func NewProtected(st *database.Store, l *slog.Logger, d directory.Directory, sessions *adminauth.Sessions) *Server {
 	s := New(st, l)
@@ -75,6 +87,9 @@ func NewProtected(st *database.Store, l *slog.Logger, d directory.Directory, ses
 func (s *Server) Handler() http.Handler { return s.security(s.adminGuard(s.mux)) }
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, r *http.Request) { s.json(w, 200, map[string]string{"status": "ok"}) })
+	s.mux.HandleFunc("POST /api/v1/client/status", s.clientStatus)
+	s.mux.HandleFunc("GET /api/v1/clients", s.clients)
+	s.mux.HandleFunc("GET /status", s.systemStatusPage)
 	s.mux.HandleFunc("GET /api/v1/users", s.users)
 	s.mux.HandleFunc("POST /api/v1/users", s.users)
 	s.mux.HandleFunc("GET /api/v1/users/{id}", s.user)
@@ -105,7 +120,7 @@ func (s *Server) routes() {
 }
 func (s *Server) adminGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !s.protect || r.URL.Path == "/login" || r.URL.Path == "/api/v1/health" || r.URL.Path == "/api/v1/auth/badge" || r.URL.Path == "/api/v1/auth/pkinit" || strings.HasPrefix(r.URL.Path, "/self-service") || strings.HasPrefix(r.URL.Path, "/static/") {
+		if !s.protect || r.URL.Path == "/login" || r.URL.Path == "/api/v1/health" || r.URL.Path == "/api/v1/client/status" || r.URL.Path == "/api/v1/auth/badge" || r.URL.Path == "/api/v1/auth/pkinit" || strings.HasPrefix(r.URL.Path, "/self-service") || strings.HasPrefix(r.URL.Path, "/static/") {
 			next.ServeHTTP(w, r)
 			return
 		}

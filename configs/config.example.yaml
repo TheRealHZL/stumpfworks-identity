@@ -2,6 +2,8 @@ server:
   listen: "0.0.0.0:8080"
 database:
   path: "./data/badges.db"
+updates:
+  client_target_version: "1.2.1"
 directory:
   enabled: false
   url: "ldaps://dc01.example.test:636"

@@ -86,11 +86,12 @@ install_login01() {
     domain=$(ask "Active Directory DNS domain" "example.test")
     admin_group=$(ask "SWBA administrator group DN" "CN=SWBadge-Admins,CN=Users,$base_dn")
     realm=$(ask "Kerberos realm" "$(printf '%s' "$domain" | tr '[:lower:]' '[:upper:]')")
+    client_target_version=$(ask "Managed Linux client target version" "1.2.1")
     directory_cert_sha256=$(ask "DC LDAPS certificate SHA-256 pin (optional)")
     bind_password=$(ask_secret "LDAP service account password (not displayed)")
 
     for item in "$binary" "$tls_cert" "$tls_key" "$pkinit_cert" "$pkinit_key"; do require_file "$item"; done
-    for pair in "$listen|listen address" "$directory_url|directory URL" "$base_dn|base DN" "$bind_dn|bind DN" "$domain|domain" "$admin_group|admin group" "$realm|realm"; do
+    for pair in "$listen|listen address" "$directory_url|directory URL" "$base_dn|base DN" "$bind_dn|bind DN" "$domain|domain" "$admin_group|admin group" "$realm|realm" "$client_target_version|client target version"; do
         safe_value "${pair%%|*}" "${pair#*|}"
     done
     [ -n "$bind_password" ] || die "LDAP password must not be empty"
@@ -158,6 +159,8 @@ pkinit:
   ca_cert_file: "/etc/stumpfworks-badge/pkinit-ca/ca.crt"
   ca_key_file: "/etc/stumpfworks-badge/pkinit-ca/ca.key"
   realm: "$realm"
+updates:
+  client_target_version: "$client_target_version"
 EOF
     chown root:swbadge /etc/stumpfworks-badge/config.yaml
     chmod 0640 /etc/stumpfworks-badge/config.yaml
@@ -186,18 +189,28 @@ install_client() {
     note "Linux client guided installation"
 
     pam_binary=$(ask "Path to sw-badge-pam-helper Linux binary" "$project_dir/bin/sw-badge-pam-helper")
+    status_binary=$(ask "Path to sw-badge-client-status Linux binary" "$project_dir/bin/sw-badge-client-status")
+    diagnostics_binary=$(ask "Path to sw-badge-client-diagnostics Linux binary" "$project_dir/bin/sw-badge-client-diagnostics")
+    updater_binary=$(ask "Path to sw-badge-client-updater Linux binary" "$project_dir/bin/sw-badge-client-updater")
+    update_public_key=$(ask "Path to trusted client-update public key")
     ca_source=$(ask "Path to trusted Homelab CA certificate")
     server_url=$(ask "LOGIN01 HTTPS URL" "https://login01.example.test:8080")
     client_id=$(ask "Unique client ID" "$(hostname -s)-greeter")
     realm=$(ask "Kerberos realm" "EXAMPLE.TEST")
     camera_resolution=$(ask "Camera scan resolution" "640x480")
     file01_mounts=$(ask "Install FILE01 Kerberos mounts (yes/no)" "yes")
+    client_status_token=$(ask_secret "Provisioned LOGIN01 client-status token (not displayed)")
     require_file "$pam_binary"
+    require_file "$status_binary"
+    require_file "$diagnostics_binary"
+    require_file "$updater_binary"
+    require_file "$update_public_key"
     require_file "$ca_source"
     case "$server_url" in https://*) ;; *) die "server URL must use https://" ;; esac
     for pair in "$server_url|server URL" "$client_id|client ID" "$realm|realm"; do safe_value "${pair%%|*}" "${pair#*|}"; done
     case "$camera_resolution" in *[!0-9x]*|*x*x*|x*|*x) die "camera resolution must look like 640x480" ;; esac
     case "$file01_mounts" in yes|no) ;; *) die "FILE01 mount selection must be yes or no" ;; esac
+    [ -n "$client_status_token" ] || die "client-status token must not be empty"
     for command in lightdm zbarcam kinit getent nmcli; do require_command "$command"; done
     find /usr/lib -path '*/krb5/plugins/preauth/pkinit.so' -print -quit | grep -q . || die "Kerberos PKINIT plugin is missing; install krb5-pkinit"
     if [ "$file01_mounts" = yes ]; then
@@ -217,13 +230,17 @@ install_client() {
 
     rollback="/root/swbadge-client-install-rollback-$timestamp"
     install -d -m 0700 "$rollback"
-    for target in /etc/pam.d/lightdm /etc/lightdm/lightdm.conf.d/60-stumpfworks-badge.conf /usr/share/xgreeters/sw-badge-greeter.desktop /usr/local/bin/sw-badge-native-greeter /usr/local/bin/sw-badge-native-greeter-wrapper /usr/local/bin/sw-badge-camera-linux /usr/local/libexec/sw-badge-pam-helper /usr/local/libexec/sw-badge-pam-helper-wrapper /etc/stumpfworks-badge/client.conf /etc/polkit-1/rules.d/49-swbadge-networkmanager.rules /etc/security/pam_mount.conf.xml; do
+    for target in /etc/pam.d/lightdm /etc/lightdm/lightdm.conf.d/60-stumpfworks-badge.conf /usr/share/xgreeters/sw-badge-greeter.desktop /usr/local/bin/sw-badge-native-greeter /usr/local/bin/sw-badge-native-greeter-wrapper /usr/local/bin/sw-badge-camera-linux /usr/local/libexec/sw-badge-pam-helper /usr/local/libexec/sw-badge-pam-helper-wrapper /usr/local/libexec/sw-badge-client-status /usr/local/sbin/sw-badge-client-diagnostics /usr/local/sbin/sw-badge-client-updater /etc/stumpfworks-badge/client-update.pub /etc/stumpfworks-badge/client.conf /etc/stumpfworks-badge/client-status-token /etc/systemd/system/swbadge-client-status.service /etc/systemd/system/swbadge-client-status.timer /etc/polkit-1/rules.d/49-swbadge-networkmanager.rules /etc/security/pam_mount.conf.xml; do
         backup_file "$target" "$rollback"
     done
 
     install -d -o root -g root -m 0755 /usr/local/libexec /usr/local/bin
     install -d -o root -g lightdm -m 0750 /etc/stumpfworks-badge
     install -o root -g root -m 0755 "$pam_binary" /usr/local/libexec/sw-badge-pam-helper
+    install -o root -g root -m 0755 "$status_binary" /usr/local/libexec/sw-badge-client-status
+    install -o root -g root -m 0755 "$diagnostics_binary" /usr/local/sbin/sw-badge-client-diagnostics
+    install -o root -g root -m 0755 "$updater_binary" /usr/local/sbin/sw-badge-client-updater
+    install -o root -g root -m 0644 "$update_public_key" /etc/stumpfworks-badge/client-update.pub
     install -o root -g root -m 0755 "$project_dir/scripts/sw-badge-pam-helper-wrapper.sh" /usr/local/libexec/sw-badge-pam-helper-wrapper
     install -o root -g root -m 0755 "$project_dir/cmd/native-greeter/sw-badge-native-greeter.py" /usr/local/bin/sw-badge-native-greeter
     # A project copied from Windows may have CRLF line endings. Normalize the
@@ -244,14 +261,27 @@ SWBADGE_CAMERA_HELPER='/usr/local/bin/sw-badge-camera-linux'
 SWBADGE_CAMERA_RESOLUTION='$camera_resolution'
 SWBADGE_GRANT_FILE='/run/swbadge/login-grant'
 SWBADGE_REALM='$realm'
+SWBADGE_CLIENT_TOKEN_FILE='/etc/stumpfworks-badge/client-status-token'
+SWBADGE_UPDATE_PUBLIC_KEY='/etc/stumpfworks-badge/client-update.pub'
 EOF
     chown root:lightdm /etc/stumpfworks-badge/client.conf
     chmod 0640 /etc/stumpfworks-badge/client.conf
+    umask 077
+    token_tmp=$(mktemp)
+    trap 'rm -f "$token_tmp"' EXIT INT TERM
+    printf '%s' "$client_status_token" > "$token_tmp"
+    install -o root -g root -m 0600 "$token_tmp" /etc/stumpfworks-badge/client-status-token
+    rm -f "$token_tmp"
+    trap - EXIT INT TERM
     install -o root -g root -m 0644 "$project_dir/deploy/lightdm/sw-badge-greeter.desktop" /usr/share/xgreeters/sw-badge-greeter.desktop
     install -d -o root -g root -m 0755 /etc/lightdm/lightdm.conf.d
     install -o root -g root -m 0644 "$project_dir/deploy/lightdm/60-stumpfworks-native-greeter.conf" /etc/lightdm/lightdm.conf.d/60-stumpfworks-badge.conf
     install -o root -g root -m 0644 "$project_dir/deploy/tmpfiles/swbadge.conf" /usr/lib/tmpfiles.d/swbadge.conf
     systemd-tmpfiles --create /usr/lib/tmpfiles.d/swbadge.conf
+    install -o root -g root -m 0644 "$project_dir/deploy/systemd/swbadge-client-status.service" /etc/systemd/system/swbadge-client-status.service
+    install -o root -g root -m 0644 "$project_dir/deploy/systemd/swbadge-client-status.timer" /etc/systemd/system/swbadge-client-status.timer
+    systemctl daemon-reload
+    systemctl enable swbadge-client-status.timer
 
     pam_rule='auth [success=done default=ignore] pam_exec.so quiet quiet_log /usr/local/libexec/sw-badge-pam-helper-wrapper'
     if ! grep -Fq 'sw-badge-pam-helper-wrapper' /etc/pam.d/lightdm; then
@@ -262,6 +292,14 @@ EOF
     fi
 
     python3 -m py_compile /usr/local/bin/sw-badge-native-greeter
+    /usr/local/sbin/sw-badge-client-updater --version
+    nmcli general status >/dev/null
+    systemctl start swbadge-client-status.service
+    install -d -o root -g root -m 0700 /var/lib/stumpfworks-badge/diagnostics
+    set -a
+    . /etc/stumpfworks-badge/client.conf
+    set +a
+    /usr/local/sbin/sw-badge-client-diagnostics --output "/var/lib/stumpfworks-badge/diagnostics/install-$timestamp.zip"
     if confirm "Restart LightDM now? This ends the current graphical session."; then
         systemctl restart lightdm
         systemctl --no-pager --full status lightdm

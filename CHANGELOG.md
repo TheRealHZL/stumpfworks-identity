@@ -2,6 +2,34 @@
 
 All notable changes to StumpfWorks Identity are documented here.
 
+## [Unreleased]
+
+## [1.2.1] - 2026-08-28
+
+### Added
+
+- Server-side client registration with one-time random credentials stored only as hashes.
+- Authenticated, data-minimized client health reporting and a protected client-list API.
+- A hardened one-shot Linux status collector with a periodic systemd timer.
+- A protected administrative client-health overview with explicit stale-report detection.
+- Local client-token rotation and reversible status-credential disabling without exposing secrets to the web interface.
+- Client/server semantic-version comparison with an update-availability indicator in the protected status page.
+- Root-only, privacy-limited client diagnostic archives and an automatic post-installation system check.
+- Verification-only client updater with signed manifests, fixed components, architecture checks and package-integrity limits.
+- Isolated atomic staging with fixed installation targets, a machine-readable plan and a second payload-integrity check.
+- Atomic rollback snapshot preparation with source hashes, missing-file records and symlink rejection.
+- Prevalidated, resumable rollback restoration with atomic file replacement and failure-injection tests.
+- Atomic installation transaction with automatic rollback and tampered-stage rejection.
+- Mandatory post-install health gate with automatic restoration after an injected unhealthy result.
+- Component-aware systemd health orchestration and an explicit maintenance-window requirement for greeter updates.
+- Guarded client-updater installation mode with mandatory fresh staging and rollback paths.
+- Post-rollback systemd recovery checks and explicit LightDM restart handling for approved greeter maintenance.
+- Create-only Ed25519 development key generation and signed update packaging with fixed component validation.
+- Privacy-bounded client update outcome reporting with target version, timestamp and rollback availability.
+- Admin system-status history for the last reported client update, including success or failure.
+- Greeter maintenance now rebinds the current persistent `swbadge-vnc.service` instead of the retired transient unit.
+- Separate configurable managed-client target version from the running LOGIN01 build version.
+
 ## [1.1.0] - 2026-08-26
 
 ### Added
