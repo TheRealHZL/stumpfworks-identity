@@ -145,3 +145,57 @@ func TestRecentBadgeAuthByUserIsBoundedAndPrivate(t *testing.T) {
 		}
 	}
 }
+
+func TestPendingReplacementRequiresOwnerActivation(t *testing.T) {
+	store, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	alice, _ := store.CreateUser(t.Context(), "alice", "Alice", "")
+	bob, _ := store.CreateUser(t.Context(), "bob", "Bob", "")
+	old, _ := store.CreateBadge(t.Context(), alice.ID, "old-hash", "Old")
+	replacement, err := store.ReplaceBadgePending(t.Context(), old.ID, "new-hash", "Replacement")
+	if err != nil || replacement.Enabled || !replacement.ActivationPending {
+		t.Fatalf("unexpected pending replacement: %+v, %v", replacement, err)
+	}
+	if err = store.ActivatePendingBadgeForUser(t.Context(), replacement.ID, bob.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("foreign activation returned %v", err)
+	}
+	if err = store.ActivatePendingBadgeForUser(t.Context(), replacement.ID, alice.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.ActivatePendingBadgeForUser(t.Context(), replacement.ID, alice.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("second activation returned %v", err)
+	}
+}
+
+func TestSelfServiceSessionsCanRevokeOthers(t *testing.T) {
+	store, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, id := range []string{"current", "other"} {
+		if err = store.CreateSelfServiceSession(t.Context(), id, "alice", now.Add(15*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = store.CreateSelfServiceSession(t.Context(), "bob", "bob", now.Add(15*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	count, err := store.RevokeOtherSelfServiceSessions(t.Context(), "alice", "current")
+	if err != nil || count != 1 {
+		t.Fatalf("unexpected revoke result: %d, %v", count, err)
+	}
+	if _, err = store.ActiveSelfServiceSession(t.Context(), "other", "alice", now); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("other session still active: %v", err)
+	}
+	if _, err = store.ActiveSelfServiceSession(t.Context(), "current", "alice", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.ActiveSelfServiceSession(t.Context(), "bob", "bob", now); err != nil {
+		t.Fatal(err)
+	}
+}

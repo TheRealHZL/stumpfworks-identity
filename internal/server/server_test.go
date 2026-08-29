@@ -264,6 +264,9 @@ func TestSelfServicePIN(t *testing.T) {
 	bob, _ := st.CreateUser(t.Context(), "bob", "Bob Example", "CN=Bob Example,DC=example")
 	aliceBadge, _ := st.CreateBadge(t.Context(), alice.ID, "alice-token-must-not-leak", "Primary badge")
 	bobBadge, _ := st.CreateBadge(t.Context(), bob.ID, "bob-token-must-not-leak", "Other user badge")
+	replacementSource, _ := st.CreateBadge(t.Context(), alice.ID, "old-replacement-token", "Old badge")
+	replacementToken := "replacement-token-must-not-leak"
+	pendingReplacement, _ := st.ReplaceBadgePending(t.Context(), replacementSource.ID, badge.HashToken(replacementToken), "Replacement")
 	st.Audit(t.Context(), "auth_success", aliceBadge.BadgeCode, "alice", "alice-client", true, "192.0.2.20", "alice-private-detail")
 	st.Audit(t.Context(), "auth_failed", aliceBadge.BadgeCode, "alice", "alice-client", false, "192.0.2.21", "alice-private-failure")
 	st.Audit(t.Context(), "auth_success", bobBadge.BadgeCode, "bob", "bob-client", true, "192.0.2.22", "bob-private-detail")
@@ -301,6 +304,43 @@ func TestSelfServicePIN(t *testing.T) {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("self-service login history leaked %q: %s", forbidden, body)
 		}
+	}
+
+	form = strings.NewReader("payload=" + badge.Payload(pendingReplacement.BadgeCode, replacementToken) + "&_csrf=" + sessions.CSRF(cookie.Value))
+	r = httptest.NewRequest("POST", "/self-service/badges/activate", form)
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/self-service?status=badge_activated" {
+		t.Fatalf("replacement activation returned %d: %s", w.Code, w.Header().Get("Location"))
+	}
+	activated, _ := st.GetBadge(t.Context(), pendingReplacement.ID)
+	if !activated.Enabled || activated.ActivationPending {
+		t.Fatalf("replacement was not activated: %+v", activated)
+	}
+
+	form = strings.NewReader("username=alice&password=correct")
+	r = httptest.NewRequest("POST", "/self-service/login", form)
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	otherCookie := w.Result().Cookies()[0]
+	form = strings.NewReader("_csrf=" + sessions.CSRF(cookie.Value))
+	r = httptest.NewRequest("POST", "/self-service/sessions/logout-others", form)
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/self-service?status=sessions_revoked" {
+		t.Fatalf("logout others returned %d: %s", w.Code, w.Header().Get("Location"))
+	}
+	r = httptest.NewRequest("GET", "/self-service", nil)
+	r.AddCookie(otherCookie)
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if strings.Contains(w.Body.String(), "Hello, Alice Example") {
+		t.Fatal("revoked other self-service session remained active")
 	}
 
 	form = strings.NewReader("pin=5831&pin_confirm=5831&_csrf=" + sessions.CSRF(cookie.Value))

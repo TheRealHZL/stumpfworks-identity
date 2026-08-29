@@ -27,6 +27,10 @@ Lost-badge self-service revocation is constrained again inside the database tran
 
 Self-service login history is selected server-side from the signed session username and bounded to 20 badge-authentication events. The dedicated projection omits IP address and free-form audit details by construction and does not return unrelated event types or another username's records.
 
+Replacement is a two-stage operation: the administrator atomically revokes the old active badge and issues a disabled badge marked only as pending activation. The assigned user must then present its one-time payload in self-service. Ownership, pending state and token hash must all match before activation; a lost or normally revoked badge is never eligible.
+
+Self-service cookies remain signed and short-lived but now also reference a random server-side session record. Every request verifies both layers. Users can list their own active records and revoke all other sessions; deployment of this migration intentionally invalidates older untracked self-service cookies.
+
 ## Trust boundaries
 
 - Homelab TLS CA: LOGIN01 HTTPS
