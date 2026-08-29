@@ -120,3 +120,28 @@ func TestRevokeActiveBadgeForUserEnforcesOwnership(t *testing.T) {
 		t.Fatalf("second revoke returned %v", err)
 	}
 }
+
+func TestRecentBadgeAuthByUserIsBoundedAndPrivate(t *testing.T) {
+	store, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	for i := 0; i < 25; i++ {
+		store.Audit(t.Context(), "auth_success", "ALICE-BADGE", "Alice", "client-alice", true, "192.0.2.10", "private-detail")
+	}
+	store.Audit(t.Context(), "auth_failed", "BOB-BADGE", "bob", "client-bob", false, "192.0.2.11", "private-bob-detail")
+	store.Audit(t.Context(), "self_service_login", "", "alice", "", true, "192.0.2.12", "not-a-badge-login")
+	events, err := store.RecentBadgeAuthByUser(t.Context(), "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 20 {
+		t.Fatalf("expected bounded history of 20 entries, got %d", len(events))
+	}
+	for _, event := range events {
+		if event.BadgeID != "ALICE-BADGE" || event.ClientID != "client-alice" || !event.Success {
+			t.Fatalf("foreign or unrelated event leaked: %+v", event)
+		}
+	}
+}

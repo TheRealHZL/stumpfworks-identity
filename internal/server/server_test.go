@@ -264,6 +264,9 @@ func TestSelfServicePIN(t *testing.T) {
 	bob, _ := st.CreateUser(t.Context(), "bob", "Bob Example", "CN=Bob Example,DC=example")
 	aliceBadge, _ := st.CreateBadge(t.Context(), alice.ID, "alice-token-must-not-leak", "Primary badge")
 	bobBadge, _ := st.CreateBadge(t.Context(), bob.ID, "bob-token-must-not-leak", "Other user badge")
+	st.Audit(t.Context(), "auth_success", aliceBadge.BadgeCode, "alice", "alice-client", true, "192.0.2.20", "alice-private-detail")
+	st.Audit(t.Context(), "auth_failed", aliceBadge.BadgeCode, "alice", "alice-client", false, "192.0.2.21", "alice-private-failure")
+	st.Audit(t.Context(), "auth_success", bobBadge.BadgeCode, "bob", "bob-client", true, "192.0.2.22", "bob-private-detail")
 
 	form := strings.NewReader("username=alice&password=correct")
 	r := httptest.NewRequest("POST", "/self-service/login", form)
@@ -290,6 +293,14 @@ func TestSelfServicePIN(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, aliceBadge.BadgeCode) || strings.Contains(body, bobBadge.BadgeCode) || strings.Contains(body, "must-not-leak") {
 		t.Fatalf("self-service badge isolation failed: %s", body)
+	}
+	if !strings.Contains(body, "Recent badge sign-ins") || !strings.Contains(body, "alice-client") || !strings.Contains(body, "Successful") || !strings.Contains(body, "Denied") {
+		t.Fatalf("self-service login history missing: %s", body)
+	}
+	for _, forbidden := range []string{"bob-client", "192.0.2.", "private-detail", "private-failure"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("self-service login history leaked %q: %s", forbidden, body)
+		}
 	}
 
 	form = strings.NewReader("pin=5831&pin_confirm=5831&_csrf=" + sessions.CSRF(cookie.Value))

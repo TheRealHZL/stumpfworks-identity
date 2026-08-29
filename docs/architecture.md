@@ -25,6 +25,8 @@ Administrator sessions require the configured AD administrator group. Self-servi
 
 Lost-badge self-service revocation is constrained again inside the database transaction by both badge ID and authenticated user ID. It never accepts a username or owner ID from form data and never returns whether a foreign badge exists.
 
+Self-service login history is selected server-side from the signed session username and bounded to 20 badge-authentication events. The dedicated projection omits IP address and free-form audit details by construction and does not return unrelated event types or another username's records.
+
 ## Trust boundaries
 
 - Homelab TLS CA: LOGIN01 HTTPS

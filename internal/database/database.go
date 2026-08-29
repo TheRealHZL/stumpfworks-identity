@@ -47,6 +47,12 @@ type UserBadge struct {
 	CreatedAt   time.Time
 	LastUsedAt  sql.NullTime
 }
+type UserAuthEvent struct {
+	BadgeID   string
+	ClientID  string
+	Success   bool
+	Timestamp time.Time
+}
 type Audit struct {
 	ID                                     int64 `json:"id"`
 	EventType, BadgeID, Username, ClientID string
@@ -280,6 +286,22 @@ func (s *Store) Audits(ctx context.Context) ([]Audit, error) {
 			return nil, e
 		}
 		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+func (s *Store) RecentBadgeAuthByUser(ctx context.Context, username string) ([]UserAuthEvent, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT badge_id,client_id,success,timestamp FROM audit_log WHERE lower(username)=lower(?) AND event_type IN ('auth_success','auth_failed') ORDER BY id DESC LIMIT 20`, username)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []UserAuthEvent{}
+	for rows.Next() {
+		var event UserAuthEvent
+		if err = rows.Scan(&event.BadgeID, &event.ClientID, &event.Success, &event.Timestamp); err != nil {
+			return nil, err
+		}
+		out = append(out, event)
 	}
 	return out, rows.Err()
 }

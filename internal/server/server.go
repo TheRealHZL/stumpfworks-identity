@@ -64,6 +64,10 @@ type selfServiceBadgeView struct {
 	ID                                        int64
 	BadgeCode, Description, Created, LastUsed string
 }
+type selfServiceAuthView struct {
+	BadgeCode, ClientID, Timestamp, Result string
+	Success                                bool
+}
 
 func New(st *database.Store, l *slog.Logger) *Server {
 	s := &Server{store: st, log: l, started: time.Now(), mux: http.NewServeMux(), loginAttempts: map[string][]time.Time{}, pinAttempts: map[string][]time.Time{}, grants: map[string]loginGrant{}, clientTargetVersion: version.Version}
@@ -331,7 +335,8 @@ func (s *Server) selfServicePage(w http.ResponseWriter, r *http.Request) {
 	if username, token, ok := s.selfServiceSession(r); ok {
 		if u, e := s.store.UserByUsername(r.Context(), username); e == nil {
 			badges, badgeErr := s.store.ActiveBadgesByUser(r.Context(), u.ID)
-			if badgeErr == nil {
+			authEvents, authErr := s.store.RecentBadgeAuthByUser(r.Context(), u.Username)
+			if badgeErr == nil && authErr == nil {
 				views := make([]selfServiceBadgeView, 0, len(badges))
 				for _, b := range badges {
 					lastUsed := "Never"
@@ -340,16 +345,30 @@ func (s *Server) selfServicePage(w http.ResponseWriter, r *http.Request) {
 					}
 					views = append(views, selfServiceBadgeView{ID: b.ID, BadgeCode: b.BadgeCode, Description: b.Description, Created: b.CreatedAt.Format("02 Jan 2006"), LastUsed: lastUsed})
 				}
+				authViews := make([]selfServiceAuthView, 0, len(authEvents))
+				for _, event := range authEvents {
+					result := "Denied"
+					if event.Success {
+						result = "Successful"
+					}
+					authViews = append(authViews, selfServiceAuthView{BadgeCode: event.BadgeID, ClientID: event.ClientID, Timestamp: event.Timestamp.UTC().Format("02 Jan 2006, 15:04 UTC"), Result: result, Success: event.Success})
+				}
 				data["Authenticated"] = true
 				data["User"] = u
 				data["Badges"] = views
+				data["AuthEvents"] = authViews
 				data["CSRF"] = s.sessions.CSRF(token)
 			}
 		}
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	_ = template.Must(template.New("self-service").Parse(selfServiceTemplate)).Execute(w, data)
+	_ = template.Must(template.New("self-service").Parse(selfServicePageTemplate())).Execute(w, data)
+}
+
+func selfServicePageTemplate() string {
+	const pinForm = `<form class="login-form" method="post" action="/self-service/pin">`
+	return strings.Replace(selfServiceTemplate, pinForm, selfServiceHistoryTemplate+pinForm, 1)
 }
 func (s *Server) selfServiceLogin(w http.ResponseWriter, r *http.Request) {
 	if !s.protect || s.dir == nil || s.sessions == nil {
@@ -805,8 +824,12 @@ func (s *Server) webRevoke(w http.ResponseWriter, r *http.Request) {
 }
 func style(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/css")
-	fmt.Fprint(w, css, selfServiceCSS)
+	fmt.Fprint(w, css, selfServiceCSS, selfServiceHistoryCSS)
 }
+
+const selfServiceHistoryTemplate = `<section class="self-history"><div class="self-section-head"><div><h2>Recent badge sign-ins</h2><p>Your latest 20 badge authentication events. Network addresses are not shown.</p></div><span class="count">{{len .AuthEvents}}</span></div>{{range .AuthEvents}}<article class="self-history-row"><span><strong>{{if .BadgeCode}}{{.BadgeCode}}{{else}}Badge unavailable{{end}}</strong><small>{{.Timestamp}}</small></span><span><small>Client</small><strong>{{if .ClientID}}{{.ClientID}}{{else}}Unknown{{end}}</strong></span><span class="badge {{if .Success}}success{{else}}danger-text{{end}}">{{.Result}}</span></article>{{else}}<p class="self-empty">No badge sign-ins have been recorded for your account yet.</p>{{end}}</section>`
+
+const selfServiceHistoryCSS = `.self-history{margin:22px 0;padding:18px;border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.018)}.self-history-row{display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:18px;padding:12px 0;border-top:1px solid var(--line)}.self-history-row strong,.self-history-row small{display:block}.self-history-row small{color:var(--muted);font-size:10px}@media(max-width:680px){.self-history-row{grid-template-columns:1fr}.self-history-row .badge{justify-self:start}}`
 
 const webTemplate = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>StumpfWorks Identity</title><link rel="stylesheet" href="/static/style.css"></head><body><aside class="sidebar"><a class="brand" href="/"><span class="brand-mark">S</span><span><strong>StumpfWorks</strong><small>Identity Platform</small></span></a><nav aria-label="Main navigation"><a class="{{if eq .Path "/"}}active{{end}}" href="/"><span>◈</span>Dashboard</a><a class="{{if eq .Path "/users"}}active{{end}}" href="/users"><span>◎</span>Users</a><a class="{{if eq .Path "/badges"}}active{{end}}" href="/badges"><span>◇</span>Badges</a><a class="{{if eq .Path "/audit"}}active{{end}}" href="/audit"><span>≡</span>Audit log</a><a class="{{if eq .Path "/status"}}active{{end}}" href="/status"><span>◉</span>System status</a></nav><div class="sidebar-foot"><div class="server-state"><i></i><span><strong>LOGIN01</strong><small>Operational</small></span></div><form method="post" action="/logout"><input type="hidden" name="_csrf" value="{{.CSRF}}"><button class="ghost" type="submit">Sign out</button></form><small class="version">Identity v{{.Version}}</small></div></aside><main class="content"><header class="topbar"><div><p class="eyebrow">STUMPFWORKS / IDENTITY</p><h1>{{if eq .Path "/"}}Dashboard{{else if eq .Path "/users"}}Users{{else if eq .Path "/badges"}}Badges{{else if eq .Path "/audit"}}Audit log{{else}}System status{{end}}</h1></div><span class="status-chip"><i></i>All systems operational</span></header>{{if eq .Path "/"}}<section class="hero panel"><div><span class="kicker">Secure access, simplified</span><h2>Badge authentication gateway</h2><p>Manage short-lived physical credentials without storing Active Directory passwords.</p></div><div class="hero-icon">◇</div></section><section class="grid stats">{{range $k,$v:=.Stats}}<article><div class="stat-icon">◈</div><div><small>{{$k}}</small><strong>{{$v}}</strong></div></article>{{end}}</section>{{else if eq .Path "/users"}}{{if .ADUsers}}<section class="panel"><div class="panel-head"><div><h2>Active Directory users</h2><p>Import an account to make it available for badge assignment.</p></div><span class="count">{{len .ADUsers}} available</span></div><div class="table-wrap"><table><thead><tr><th>Username</th><th>Display name</th><th>Mail</th><th></th></tr></thead><tbody>{{range .ADUsers}}<tr><td><strong>{{.Username}}</strong></td><td>{{.DisplayName}}</td><td class="muted">{{.Mail}}</td><td class="actions"><form method="post" action="/directory/users/import"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><input type="hidden" name="username" value="{{.Username}}"><button class="small" type="submit">Import</button></form></td></tr>{{end}}</tbody></table></div></section>{{end}}<section class="panel"><div class="panel-head"><div><h2>Badge mappings</h2><p>Users currently managed by the identity gateway.</p></div><a class="button secondary" href="/pin">Manage PINs</a></div><div class="table-wrap"><table><thead><tr><th>ID</th><th>Username</th><th>Display name</th></tr></thead><tbody>{{range .Users}}<tr><td class="mono">#{{.ID}}</td><td><strong>{{.Username}}</strong></td><td>{{.DisplayName}}</td></tr>{{else}}<tr><td class="empty" colspan="3">No mappings yet.</td></tr>{{end}}</tbody></table></div></section>{{else if eq .Path "/badges"}}{{if .Payload}}<section class="panel secret"><div><span class="badge warning">One-time secret</span><h2>Badge created — save this now</h2><p>This QR secret cannot be recovered later.</p><code>{{.Payload}}</code></div><img alt="New badge QR code" src="/api/v1/badges/{{(index .Badges 0).ID}}/qr?payload={{urlquery .Payload}}"></section>{{end}}<section class="panel"><div class="panel-head"><div><h2>Issue a new badge</h2><p>Link a physical credential to an imported directory user.</p></div></div><form class="form-row" method="post" action="/badges"><input type="hidden" name="_csrf" value="{{.CSRF}}"><label><span>User</span><select name="user_id" required><option value="">Select user</option>{{range .Users}}<option value="{{.ID}}">{{.DisplayName}} ({{.Username}})</option>{{end}}</select></label><label><span>Description</span><input name="description" placeholder="e.g. Main badge"></label><button type="submit">Issue badge</button></form></section><section class="panel"><div class="panel-head"><div><h2>Issued badges</h2><p>Active and revoked physical credentials.</p></div></div><div class="table-wrap"><table><thead><tr><th>Badge</th><th>User</th><th>Status</th><th></th></tr></thead><tbody>{{range .Badges}}<tr><td class="mono">{{.BadgeCode}}</td><td><strong>{{.DisplayName}}</strong></td><td>{{if .Enabled}}<span class="badge success">Active</span>{{else}}<span class="badge neutral">Revoked</span>{{end}}</td><td class="actions">{{if .Enabled}}<form method="post" action="/badges/{{.ID}}/revoke"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><button class="danger small" type="submit">Revoke</button></form>{{end}}</td></tr>{{else}}<tr><td class="empty" colspan="4">No badges issued yet.</td></tr>{{end}}</tbody></table></div></section>{{else if eq .Path "/audit"}}<section class="panel"><div class="panel-head"><div><h2>Security events</h2><p>Authentication and administration activity recorded by SWBA.</p></div></div><div class="table-wrap"><table><thead><tr><th>Time</th><th>Event</th><th>Badge</th><th>User</th><th>Client</th><th>Result</th></tr></thead><tbody>{{range .Audits}}<tr><td class="muted">{{.Timestamp}}</td><td><strong>{{.EventType}}</strong></td><td class="mono">{{.BadgeID}}</td><td>{{.Username}}</td><td>{{.ClientID}}</td><td>{{if .Success}}<span class="badge success">Success</span>{{else}}<span class="badge danger-text">Denied</span>{{end}}</td></tr>{{else}}<tr><td class="empty" colspan="6">No audit events recorded.</td></tr>{{end}}</tbody></table></div></section>{{else}}<section class="grid status-grid"><article><span class="status-symbol">●</span><small>SERVER</small><strong>Online</strong><p>Authentication API is available.</p></article><article><span class="status-symbol">●</span><small>DATABASE</small><strong>SQLite ready</strong><p>Identity data store is available.</p></article><article><span class="status-symbol">●</span><small>DIRECTORY</small><strong>Connected</strong><p>Active Directory integration is ready.</p></article><article><span class="status-symbol">●</span><small>UPTIME</small><strong>{{.Uptime}}</strong><p>Current server process uptime.</p></article></section>{{end}}</main></body></html>`
 const loginTemplate = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark"><title>Sign in — StumpfWorks Identity</title><link rel="stylesheet" href="/static/style.css"></head><body class="login-page"><main class="login-shell"><section class="login-brand"><a class="brand" href="/"><span class="brand-mark">S</span><span><strong>StumpfWorks</strong><small>Identity Platform</small></span></a><div><span class="kicker">Secure infrastructure access</span><h1>Identity you can hold in your hand.</h1><p>Badge-based authentication backed by Active Directory, Kerberos and short-lived credentials.</p></div><span class="login-foot">◉ &nbsp; LOGIN01 · EXAMPLE.TEST</span></section><section class="login-card"><div class="login-icon">◇</div><p class="eyebrow">ADMINISTRATION</p><h2>Welcome back</h2><p>Sign in with an authorized Active Directory account.</p><form class="login-form" method="post" action="/login"><label><span>AD username</span><input name="username" autocomplete="username" placeholder="alice-admin" required autofocus></label><label><span>Password</span><input type="password" name="password" autocomplete="current-password" placeholder="Enter your password" required></label><button type="submit">Sign in securely</button></form><p class="privacy">Credentials are verified over LDAPS and are never stored.</p></section></main></body></html>`
