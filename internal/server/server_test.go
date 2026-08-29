@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -259,6 +260,16 @@ func TestSelfServicePIN(t *testing.T) {
 	_, st := testServer(t)
 	sessions, _ := adminauth.NewSessions("01234567890123456789012345678901", time.Hour)
 	s := NewProtected(st, slog.New(slog.NewTextHandler(io.Discard, nil)), fakeDirectory{}, sessions)
+	alice, _ := st.CreateUser(t.Context(), "alice", "Alice Example", "CN=Alice Example,DC=example")
+	bob, _ := st.CreateUser(t.Context(), "bob", "Bob Example", "CN=Bob Example,DC=example")
+	aliceBadge, _ := st.CreateBadge(t.Context(), alice.ID, "alice-token-must-not-leak", "Primary badge")
+	bobBadge, _ := st.CreateBadge(t.Context(), bob.ID, "bob-token-must-not-leak", "Other user badge")
+	replacementSource, _ := st.CreateBadge(t.Context(), alice.ID, "old-replacement-token", "Old badge")
+	replacementToken := "replacement-token-must-not-leak"
+	pendingReplacement, _ := st.ReplaceBadgePending(t.Context(), replacementSource.ID, badge.HashToken(replacementToken), "Replacement")
+	st.Audit(t.Context(), "auth_success", aliceBadge.BadgeCode, "alice", "alice-client", true, "192.0.2.20", "alice-private-detail")
+	st.Audit(t.Context(), "auth_failed", aliceBadge.BadgeCode, "alice", "alice-client", false, "192.0.2.21", "alice-private-failure")
+	st.Audit(t.Context(), "auth_success", bobBadge.BadgeCode, "bob", "bob-client", true, "192.0.2.22", "bob-private-detail")
 
 	form := strings.NewReader("username=alice&password=correct")
 	r := httptest.NewRequest("POST", "/self-service/login", form)
@@ -281,6 +292,55 @@ func TestSelfServicePIN(t *testing.T) {
 	s.Handler().ServeHTTP(w, r)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Hello, Alice Example") {
 		t.Fatalf("authenticated self-service page returned %d: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, aliceBadge.BadgeCode) || strings.Contains(body, bobBadge.BadgeCode) || strings.Contains(body, "must-not-leak") {
+		t.Fatalf("self-service badge isolation failed: %s", body)
+	}
+	if !strings.Contains(body, "Recent badge sign-ins") || !strings.Contains(body, "alice-client") || !strings.Contains(body, "Successful") || !strings.Contains(body, "Denied") {
+		t.Fatalf("self-service login history missing: %s", body)
+	}
+	for _, forbidden := range []string{"bob-client", "192.0.2.", "private-detail", "private-failure"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("self-service login history leaked %q: %s", forbidden, body)
+		}
+	}
+
+	form = strings.NewReader("payload=" + badge.Payload(pendingReplacement.BadgeCode, replacementToken) + "&_csrf=" + sessions.CSRF(cookie.Value))
+	r = httptest.NewRequest("POST", "/self-service/badges/activate", form)
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/self-service?status=badge_activated" {
+		t.Fatalf("replacement activation returned %d: %s", w.Code, w.Header().Get("Location"))
+	}
+	activated, _ := st.GetBadge(t.Context(), pendingReplacement.ID)
+	if !activated.Enabled || activated.ActivationPending {
+		t.Fatalf("replacement was not activated: %+v", activated)
+	}
+
+	form = strings.NewReader("username=alice&password=correct")
+	r = httptest.NewRequest("POST", "/self-service/login", form)
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	otherCookie := w.Result().Cookies()[0]
+	form = strings.NewReader("_csrf=" + sessions.CSRF(cookie.Value))
+	r = httptest.NewRequest("POST", "/self-service/sessions/logout-others", form)
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/self-service?status=sessions_revoked" {
+		t.Fatalf("logout others returned %d: %s", w.Code, w.Header().Get("Location"))
+	}
+	r = httptest.NewRequest("GET", "/self-service", nil)
+	r.AddCookie(otherCookie)
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if strings.Contains(w.Body.String(), "Hello, Alice Example") {
+		t.Fatal("revoked other self-service session remained active")
 	}
 
 	form = strings.NewReader("pin=5831&pin_confirm=5831&_csrf=" + sessions.CSRF(cookie.Value))
@@ -305,5 +365,39 @@ func TestSelfServicePIN(t *testing.T) {
 	s.Handler().ServeHTTP(w, r)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("invalid CSRF returned %d", w.Code)
+	}
+
+	form = strings.NewReader("_csrf=" + sessions.CSRF(cookie.Value))
+	r = httptest.NewRequest("POST", "/self-service/badges/"+strconv.FormatInt(bobBadge.ID, 10)+"/revoke", form)
+	r.SetPathValue("id", strconv.FormatInt(bobBadge.ID, 10))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/self-service?error=badge_unavailable" {
+		t.Fatalf("foreign badge revoke returned %d: %s", w.Code, w.Header().Get("Location"))
+	}
+	foreign, _ := st.GetBadge(t.Context(), bobBadge.ID)
+	if !foreign.Enabled {
+		t.Fatal("self-service revoked another user's badge")
+	}
+
+	form = strings.NewReader("_csrf=" + sessions.CSRF(cookie.Value))
+	r = httptest.NewRequest("POST", "/self-service/badges/"+strconv.FormatInt(aliceBadge.ID, 10)+"/revoke", form)
+	r.SetPathValue("id", strconv.FormatInt(aliceBadge.ID, 10))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/self-service?status=badge_revoked" {
+		t.Fatalf("own badge revoke returned %d: %s", w.Code, w.Header().Get("Location"))
+	}
+	revoked, _ := st.GetBadge(t.Context(), aliceBadge.ID)
+	if revoked.Enabled {
+		t.Fatal("self-service did not revoke own badge")
+	}
+	audits, _ := st.Audits(t.Context())
+	if len(audits) == 0 || audits[0].EventType != "badge_self_service_revoked" || audits[0].BadgeID != aliceBadge.BadgeCode || audits[0].Username != "alice" {
+		t.Fatalf("missing self-service revoke audit: %+v", audits)
 	}
 }

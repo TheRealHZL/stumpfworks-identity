@@ -4,6 +4,17 @@ All notable changes to StumpfWorks Identity are documented here.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-08-29
+
+### Added
+
+- Self-service users can view only their own active badges with bounded issue and last-use metadata; badge tokens and other users' badges remain inaccessible.
+- Self-service users can report one of their own active badges as lost, immediately disabling it with ownership enforcement, CSRF protection and an audit event.
+- Self-service users can review their latest 20 badge sign-ins with only timestamp, badge code, client ID and result; IP addresses, audit details and other users' events remain hidden.
+- Administrator-issued replacement badges remain disabled until their assigned owner activates the one-time payload in self-service.
+- Self-service sessions are tracked server-side so users can view active sessions and revoke every other session without ending the current browser session.
+- The badge administration page can issue a pending replacement and display its one-time activation payload without requiring direct API use.
+
 ## [1.2.1] - 2026-08-28
 
 ### Added

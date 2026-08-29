@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -72,5 +73,129 @@ func TestRotateAndDisableClient(t *testing.T) {
 	c, err := store.ClientByID(t.Context(), "client01")
 	if err != nil || c.TokenHash != "new" || c.Enabled {
 		t.Fatalf("unexpected client state: %+v, %v", c, err)
+	}
+}
+
+func TestActiveBadgesByUserIsIsolatedAndSecretFree(t *testing.T) {
+	store, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	alice, _ := store.CreateUser(t.Context(), "alice", "Alice", "")
+	bob, _ := store.CreateUser(t.Context(), "bob", "Bob", "")
+	active, _ := store.CreateBadge(t.Context(), alice.ID, "alice-secret", "Primary")
+	revoked, _ := store.CreateBadge(t.Context(), alice.ID, "revoked-secret", "Old")
+	_, _ = store.CreateBadge(t.Context(), bob.ID, "bob-secret", "Bob badge")
+	if err = store.Revoke(t.Context(), revoked.ID); err != nil {
+		t.Fatal(err)
+	}
+	badges, err := store.ActiveBadgesByUser(t.Context(), alice.ID)
+	if err != nil || len(badges) != 1 || badges[0].BadgeCode != active.BadgeCode || badges[0].Description != "Primary" {
+		t.Fatalf("unexpected active badges: %+v, %v", badges, err)
+	}
+}
+
+func TestRevokeActiveBadgeForUserEnforcesOwnership(t *testing.T) {
+	store, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	alice, _ := store.CreateUser(t.Context(), "alice", "Alice", "")
+	bob, _ := store.CreateUser(t.Context(), "bob", "Bob", "")
+	badge, _ := store.CreateBadge(t.Context(), alice.ID, "secret", "Primary")
+	if _, err = store.RevokeActiveBadgeForUser(t.Context(), badge.ID, bob.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("foreign badge revoke returned %v", err)
+	}
+	current, _ := store.GetBadge(t.Context(), badge.ID)
+	if !current.Enabled {
+		t.Fatal("foreign user revoked badge")
+	}
+	revoked, err := store.RevokeActiveBadgeForUser(t.Context(), badge.ID, alice.ID)
+	if err != nil || revoked.BadgeCode != badge.BadgeCode {
+		t.Fatalf("owner revoke failed: %+v, %v", revoked, err)
+	}
+	if _, err = store.RevokeActiveBadgeForUser(t.Context(), badge.ID, alice.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("second revoke returned %v", err)
+	}
+}
+
+func TestRecentBadgeAuthByUserIsBoundedAndPrivate(t *testing.T) {
+	store, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	for i := 0; i < 25; i++ {
+		store.Audit(t.Context(), "auth_success", "ALICE-BADGE", "Alice", "client-alice", true, "192.0.2.10", "private-detail")
+	}
+	store.Audit(t.Context(), "auth_failed", "BOB-BADGE", "bob", "client-bob", false, "192.0.2.11", "private-bob-detail")
+	store.Audit(t.Context(), "self_service_login", "", "alice", "", true, "192.0.2.12", "not-a-badge-login")
+	events, err := store.RecentBadgeAuthByUser(t.Context(), "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 20 {
+		t.Fatalf("expected bounded history of 20 entries, got %d", len(events))
+	}
+	for _, event := range events {
+		if event.BadgeID != "ALICE-BADGE" || event.ClientID != "client-alice" || !event.Success {
+			t.Fatalf("foreign or unrelated event leaked: %+v", event)
+		}
+	}
+}
+
+func TestPendingReplacementRequiresOwnerActivation(t *testing.T) {
+	store, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	alice, _ := store.CreateUser(t.Context(), "alice", "Alice", "")
+	bob, _ := store.CreateUser(t.Context(), "bob", "Bob", "")
+	old, _ := store.CreateBadge(t.Context(), alice.ID, "old-hash", "Old")
+	replacement, err := store.ReplaceBadgePending(t.Context(), old.ID, "new-hash", "Replacement")
+	if err != nil || replacement.Enabled || !replacement.ActivationPending {
+		t.Fatalf("unexpected pending replacement: %+v, %v", replacement, err)
+	}
+	if err = store.ActivatePendingBadgeForUser(t.Context(), replacement.ID, bob.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("foreign activation returned %v", err)
+	}
+	if err = store.ActivatePendingBadgeForUser(t.Context(), replacement.ID, alice.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.ActivatePendingBadgeForUser(t.Context(), replacement.ID, alice.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("second activation returned %v", err)
+	}
+}
+
+func TestSelfServiceSessionsCanRevokeOthers(t *testing.T) {
+	store, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, id := range []string{"current", "other"} {
+		if err = store.CreateSelfServiceSession(t.Context(), id, "alice", now.Add(15*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = store.CreateSelfServiceSession(t.Context(), "bob", "bob", now.Add(15*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	count, err := store.RevokeOtherSelfServiceSessions(t.Context(), "alice", "current")
+	if err != nil || count != 1 {
+		t.Fatalf("unexpected revoke result: %d, %v", count, err)
+	}
+	if _, err = store.ActiveSelfServiceSession(t.Context(), "other", "alice", now); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("other session still active: %v", err)
+	}
+	if _, err = store.ActiveSelfServiceSession(t.Context(), "current", "alice", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.ActiveSelfServiceSession(t.Context(), "bob", "bob", now); err != nil {
+		t.Fatal(err)
 	}
 }

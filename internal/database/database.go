@@ -14,6 +14,7 @@ const migration = `CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTO
 CREATE TABLE IF NOT EXISTS badges (id INTEGER PRIMARY KEY AUTOINCREMENT, badge_code TEXT NOT NULL UNIQUE, user_id INTEGER NOT NULL REFERENCES users(id), token_hash TEXT NOT NULL, enabled BOOLEAN NOT NULL DEFAULT 1, description TEXT NOT NULL DEFAULT '', issued_by TEXT NOT NULL DEFAULT '', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, last_used_at DATETIME, revoked_at DATETIME);
 CREATE TABLE IF NOT EXISTS audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, event_type TEXT NOT NULL, badge_id TEXT NOT NULL DEFAULT '', username TEXT NOT NULL DEFAULT '', client_id TEXT NOT NULL DEFAULT '', success BOOLEAN NOT NULL, ip_address TEXT NOT NULL DEFAULT '', timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, details TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS clients (id INTEGER PRIMARY KEY AUTOINCREMENT, client_id TEXT NOT NULL UNIQUE, token_hash TEXT NOT NULL, enabled BOOLEAN NOT NULL DEFAULT 1, version TEXT NOT NULL DEFAULT '', network_status TEXT NOT NULL DEFAULT 'unknown', ad_status TEXT NOT NULL DEFAULT 'unknown', camera_status TEXT NOT NULL DEFAULT 'unknown', kerberos_status TEXT NOT NULL DEFAULT 'unknown', last_update_version TEXT NOT NULL DEFAULT '', last_update_status TEXT NOT NULL DEFAULT 'unknown', last_update_at DATETIME, rollback_available BOOLEAN NOT NULL DEFAULT 0, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, last_seen_at DATETIME);
+CREATE TABLE IF NOT EXISTS self_service_sessions (id TEXT PRIMARY KEY, username TEXT NOT NULL COLLATE NOCASE, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, expires_at DATETIME NOT NULL, revoked_at DATETIME);
 CREATE INDEX IF NOT EXISTS idx_badges_code ON badges(badge_code); CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp); CREATE INDEX IF NOT EXISTS idx_clients_last_seen ON clients(last_seen_at);`
 
 type Store struct{ DB *sql.DB }
@@ -27,18 +28,38 @@ type User struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 type Badge struct {
-	ID          int64        `json:"id"`
-	BadgeCode   string       `json:"badge_code"`
-	UserID      int64        `json:"user_id"`
-	Username    string       `json:"username"`
-	DisplayName string       `json:"display_name"`
-	PINHash     string       `json:"-"`
-	TokenHash   string       `json:"-"`
-	Enabled     bool         `json:"enabled"`
-	Description string       `json:"description"`
-	CreatedAt   time.Time    `json:"created_at"`
-	LastUsedAt  sql.NullTime `json:"-"`
-	RevokedAt   sql.NullTime `json:"-"`
+	ID                int64        `json:"id"`
+	BadgeCode         string       `json:"badge_code"`
+	UserID            int64        `json:"user_id"`
+	Username          string       `json:"username"`
+	DisplayName       string       `json:"display_name"`
+	PINHash           string       `json:"-"`
+	TokenHash         string       `json:"-"`
+	Enabled           bool         `json:"enabled"`
+	ActivationPending bool         `json:"activation_pending"`
+	Description       string       `json:"description"`
+	CreatedAt         time.Time    `json:"created_at"`
+	LastUsedAt        sql.NullTime `json:"-"`
+	RevokedAt         sql.NullTime `json:"-"`
+}
+type UserBadge struct {
+	ID          int64
+	BadgeCode   string
+	Description string
+	CreatedAt   time.Time
+	LastUsedAt  sql.NullTime
+}
+type UserAuthEvent struct {
+	BadgeID   string
+	ClientID  string
+	Success   bool
+	Timestamp time.Time
+}
+type SelfServiceSession struct {
+	ID        string
+	Username  string
+	CreatedAt time.Time
+	ExpiresAt time.Time
 }
 type Audit struct {
 	ID                                     int64 `json:"id"`
@@ -95,6 +116,17 @@ func Open(path string) (*Store, error) {
 	}
 	if pinColumns == 0 {
 		if _, err = db.Exec(`ALTER TABLE users ADD COLUMN pin_hash TEXT NOT NULL DEFAULT ''`); err != nil {
+			db.Close()
+			return nil, err
+		}
+	}
+	var activationColumns int
+	if err = db.QueryRow(`SELECT count(*) FROM pragma_table_info('badges') WHERE name='activation_pending'`).Scan(&activationColumns); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if activationColumns == 0 {
+		if _, err = db.Exec(`ALTER TABLE badges ADD COLUMN activation_pending BOOLEAN NOT NULL DEFAULT 0`); err != nil {
 			db.Close()
 			return nil, err
 		}
@@ -185,16 +217,47 @@ func (s *Store) CreateBadge(ctx context.Context, user int64, hash, desc string) 
 	}
 	return s.GetBadge(ctx, id)
 }
+func (s *Store) ReplaceBadgePending(ctx context.Context, oldID int64, tokenHash, description string) (Badge, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return Badge{}, err
+	}
+	defer tx.Rollback()
+	var userID int64
+	if err = tx.QueryRowContext(ctx, `SELECT user_id FROM badges WHERE id=? AND enabled=1`, oldID).Scan(&userID); err != nil {
+		return Badge{}, err
+	}
+	code, err := s.nextCode(ctx, tx)
+	if err != nil {
+		return Badge{}, err
+	}
+	updated, err := tx.ExecContext(ctx, `UPDATE badges SET enabled=0,activation_pending=0,revoked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND enabled=1`, oldID)
+	if err != nil {
+		return Badge{}, err
+	}
+	if changed, changeErr := updated.RowsAffected(); changeErr != nil || changed != 1 {
+		return Badge{}, sql.ErrNoRows
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO badges(badge_code,user_id,token_hash,enabled,activation_pending,description) VALUES(?,?,?,0,1,?)`, code, userID, tokenHash, description)
+	if err != nil {
+		return Badge{}, err
+	}
+	id, _ := result.LastInsertId()
+	if err = tx.Commit(); err != nil {
+		return Badge{}, err
+	}
+	return s.GetBadge(ctx, id)
+}
 func (s *Store) GetBadge(ctx context.Context, id int64) (b Badge, err error) {
-	err = s.DB.QueryRowContext(ctx, `SELECT b.id,b.badge_code,b.user_id,u.username,u.display_name,u.pin_hash,b.token_hash,b.enabled,b.description,b.created_at,b.last_used_at,b.revoked_at FROM badges b JOIN users u ON u.id=b.user_id WHERE b.id=?`, id).Scan(&b.ID, &b.BadgeCode, &b.UserID, &b.Username, &b.DisplayName, &b.PINHash, &b.TokenHash, &b.Enabled, &b.Description, &b.CreatedAt, &b.LastUsedAt, &b.RevokedAt)
+	err = s.DB.QueryRowContext(ctx, `SELECT b.id,b.badge_code,b.user_id,u.username,u.display_name,u.pin_hash,b.token_hash,b.enabled,b.activation_pending,b.description,b.created_at,b.last_used_at,b.revoked_at FROM badges b JOIN users u ON u.id=b.user_id WHERE b.id=?`, id).Scan(&b.ID, &b.BadgeCode, &b.UserID, &b.Username, &b.DisplayName, &b.PINHash, &b.TokenHash, &b.Enabled, &b.ActivationPending, &b.Description, &b.CreatedAt, &b.LastUsedAt, &b.RevokedAt)
 	return
 }
 func (s *Store) BadgeByCode(ctx context.Context, c string) (b Badge, err error) {
-	err = s.DB.QueryRowContext(ctx, `SELECT b.id,b.badge_code,b.user_id,u.username,u.display_name,u.pin_hash,b.token_hash,b.enabled,b.description,b.created_at,b.last_used_at,b.revoked_at FROM badges b JOIN users u ON u.id=b.user_id WHERE b.badge_code=?`, c).Scan(&b.ID, &b.BadgeCode, &b.UserID, &b.Username, &b.DisplayName, &b.PINHash, &b.TokenHash, &b.Enabled, &b.Description, &b.CreatedAt, &b.LastUsedAt, &b.RevokedAt)
+	err = s.DB.QueryRowContext(ctx, `SELECT b.id,b.badge_code,b.user_id,u.username,u.display_name,u.pin_hash,b.token_hash,b.enabled,b.activation_pending,b.description,b.created_at,b.last_used_at,b.revoked_at FROM badges b JOIN users u ON u.id=b.user_id WHERE b.badge_code=?`, c).Scan(&b.ID, &b.BadgeCode, &b.UserID, &b.Username, &b.DisplayName, &b.PINHash, &b.TokenHash, &b.Enabled, &b.ActivationPending, &b.Description, &b.CreatedAt, &b.LastUsedAt, &b.RevokedAt)
 	return
 }
 func (s *Store) Badges(ctx context.Context) ([]Badge, error) {
-	rows, e := s.DB.QueryContext(ctx, `SELECT b.id,b.badge_code,b.user_id,u.username,u.display_name,u.pin_hash,b.token_hash,b.enabled,b.description,b.created_at,b.last_used_at,b.revoked_at FROM badges b JOIN users u ON u.id=b.user_id ORDER BY b.id DESC`)
+	rows, e := s.DB.QueryContext(ctx, `SELECT b.id,b.badge_code,b.user_id,u.username,u.display_name,u.pin_hash,b.token_hash,b.enabled,b.activation_pending,b.description,b.created_at,b.last_used_at,b.revoked_at FROM badges b JOIN users u ON u.id=b.user_id ORDER BY b.id DESC`)
 	if e != nil {
 		return nil, e
 	}
@@ -202,15 +265,66 @@ func (s *Store) Badges(ctx context.Context) ([]Badge, error) {
 	out := []Badge{}
 	for rows.Next() {
 		var b Badge
-		if e = rows.Scan(&b.ID, &b.BadgeCode, &b.UserID, &b.Username, &b.DisplayName, &b.PINHash, &b.TokenHash, &b.Enabled, &b.Description, &b.CreatedAt, &b.LastUsedAt, &b.RevokedAt); e != nil {
+		if e = rows.Scan(&b.ID, &b.BadgeCode, &b.UserID, &b.Username, &b.DisplayName, &b.PINHash, &b.TokenHash, &b.Enabled, &b.ActivationPending, &b.Description, &b.CreatedAt, &b.LastUsedAt, &b.RevokedAt); e != nil {
 			return nil, e
 		}
 		out = append(out, b)
 	}
 	return out, rows.Err()
 }
+func (s *Store) ActiveBadgesByUser(ctx context.Context, userID int64) ([]UserBadge, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,badge_code,description,created_at,last_used_at FROM badges WHERE user_id=? AND enabled=1 ORDER BY id DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []UserBadge{}
+	for rows.Next() {
+		var b UserBadge
+		if err = rows.Scan(&b.ID, &b.BadgeCode, &b.Description, &b.CreatedAt, &b.LastUsedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+func (s *Store) RevokeActiveBadgeForUser(ctx context.Context, badgeID, userID int64) (UserBadge, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return UserBadge{}, err
+	}
+	defer tx.Rollback()
+	var b UserBadge
+	err = tx.QueryRowContext(ctx, `SELECT id,badge_code,description,created_at,last_used_at FROM badges WHERE id=? AND user_id=? AND enabled=1`, badgeID, userID).Scan(&b.ID, &b.BadgeCode, &b.Description, &b.CreatedAt, &b.LastUsedAt)
+	if err != nil {
+		return UserBadge{}, err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE badges SET enabled=0,revoked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? AND enabled=1`, badgeID, userID)
+	if err != nil {
+		return UserBadge{}, err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil || changed != 1 {
+		return UserBadge{}, sql.ErrNoRows
+	}
+	if err = tx.Commit(); err != nil {
+		return UserBadge{}, err
+	}
+	return b, nil
+}
+func (s *Store) ActivatePendingBadgeForUser(ctx context.Context, badgeID, userID int64) error {
+	result, err := s.DB.ExecContext(ctx, `UPDATE badges SET enabled=1,activation_pending=0,revoked_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? AND enabled=0 AND activation_pending=1`, badgeID, userID)
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil || changed != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
 func (s *Store) Revoke(ctx context.Context, id int64) error {
-	_, e := s.DB.ExecContext(ctx, `UPDATE badges SET enabled=0,revoked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?`, id)
+	_, e := s.DB.ExecContext(ctx, `UPDATE badges SET enabled=0,activation_pending=0,revoked_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?`, id)
 	return e
 }
 func (s *Store) Used(ctx context.Context, id int64) error {
@@ -235,6 +349,58 @@ func (s *Store) Audits(ctx context.Context) ([]Audit, error) {
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+func (s *Store) RecentBadgeAuthByUser(ctx context.Context, username string) ([]UserAuthEvent, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT badge_id,client_id,success,timestamp FROM audit_log WHERE lower(username)=lower(?) AND event_type IN ('auth_success','auth_failed') ORDER BY id DESC LIMIT 20`, username)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []UserAuthEvent{}
+	for rows.Next() {
+		var event UserAuthEvent
+		if err = rows.Scan(&event.BadgeID, &event.ClientID, &event.Success, &event.Timestamp); err != nil {
+			return nil, err
+		}
+		out = append(out, event)
+	}
+	return out, rows.Err()
+}
+func (s *Store) CreateSelfServiceSession(ctx context.Context, id, username string, expiresAt time.Time) error {
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO self_service_sessions(id,username,expires_at) VALUES(?,?,?)`, id, username, expiresAt.UTC())
+	return err
+}
+func (s *Store) ActiveSelfServiceSession(ctx context.Context, id, username string, now time.Time) (SelfServiceSession, error) {
+	var session SelfServiceSession
+	err := s.DB.QueryRowContext(ctx, `SELECT id,username,created_at,expires_at FROM self_service_sessions WHERE id=? AND lower(username)=lower(?) AND revoked_at IS NULL AND expires_at>=?`, id, username, now.UTC()).Scan(&session.ID, &session.Username, &session.CreatedAt, &session.ExpiresAt)
+	return session, err
+}
+func (s *Store) ActiveSelfServiceSessions(ctx context.Context, username string, now time.Time) ([]SelfServiceSession, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT id,username,created_at,expires_at FROM self_service_sessions WHERE lower(username)=lower(?) AND revoked_at IS NULL AND expires_at>=? ORDER BY created_at DESC LIMIT 20`, username, now.UTC())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []SelfServiceSession{}
+	for rows.Next() {
+		var session SelfServiceSession
+		if err = rows.Scan(&session.ID, &session.Username, &session.CreatedAt, &session.ExpiresAt); err != nil {
+			return nil, err
+		}
+		out = append(out, session)
+	}
+	return out, rows.Err()
+}
+func (s *Store) RevokeOtherSelfServiceSessions(ctx context.Context, username, currentID string) (int64, error) {
+	result, err := s.DB.ExecContext(ctx, `UPDATE self_service_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE lower(username)=lower(?) AND id<>? AND revoked_at IS NULL AND expires_at>=CURRENT_TIMESTAMP`, username, currentID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+func (s *Store) RevokeSelfServiceSession(ctx context.Context, id, username string) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE self_service_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE id=? AND lower(username)=lower(?)`, id, username)
+	return err
 }
 func (s *Store) Stats(ctx context.Context) map[string]int {
 	out := map[string]int{}

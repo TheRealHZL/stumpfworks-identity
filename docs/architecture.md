@@ -21,7 +21,15 @@ The result is a real user TGT. No synthetic or stored AD password is involved.
 
 ## Web authentication
 
-Administrator sessions require the configured AD administrator group. Self-service accepts a valid AD user but can update only that identity's SWBA PIN. Signed session tokens carry distinct `admin` and `self-service` audiences and cannot be exchanged. Browser writes use secure, HTTP-only, SameSite strict cookies and CSRF tokens. Self-service expires after 15 minutes.
+Administrator sessions require the configured AD administrator group. Self-service accepts a valid AD user but can update only that identity's SWBA PIN and read a bounded list of active badges selected by the authenticated local user ID. Signed session tokens carry distinct `admin` and `self-service` audiences and cannot be exchanged. Browser writes use secure, HTTP-only, SameSite strict cookies and CSRF tokens. Self-service expires after 15 minutes.
+
+Lost-badge self-service revocation is constrained again inside the database transaction by both badge ID and authenticated user ID. It never accepts a username or owner ID from form data and never returns whether a foreign badge exists.
+
+Self-service login history is selected server-side from the signed session username and bounded to 20 badge-authentication events. The dedicated projection omits IP address and free-form audit details by construction and does not return unrelated event types or another username's records.
+
+Replacement is a two-stage operation: the administrator atomically revokes the old active badge and issues a disabled badge marked only as pending activation. The assigned user must then present its one-time payload in self-service. Ownership, pending state and token hash must all match before activation; a lost or normally revoked badge is never eligible.
+
+Self-service cookies remain signed and short-lived but now also reference a random server-side session record. Every request verifies both layers. Users can list their own active records and revoke all other sessions; deployment of this migration intentionally invalidates older untracked self-service cookies.
 
 ## Trust boundaries
 
