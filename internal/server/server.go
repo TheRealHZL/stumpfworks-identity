@@ -132,6 +132,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /users", s.webCreateUser)
 	s.mux.HandleFunc("POST /badges", s.webCreateBadge)
 	s.mux.HandleFunc("POST /badges/{id}/revoke", s.webRevoke)
+	s.mux.HandleFunc("POST /badges/{id}/replace", s.webReplace)
 }
 func (s *Server) adminGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -843,7 +844,13 @@ func (s *Server) security(next http.Handler) http.Handler {
 	})
 }
 
-var page = template.Must(template.New("page").Parse(webTemplate))
+var page = template.Must(template.New("page").Parse(webPageTemplate()))
+
+func webPageTemplate() string {
+	result := strings.Replace(webTemplate, `{{if .Enabled}}<span class="badge success">Active</span>{{else}}<span class="badge neutral">Revoked</span>{{end}}`, `{{if .Enabled}}<span class="badge success">Active</span>{{else if .ActivationPending}}<span class="badge warning">Pending activation</span>{{else}}<span class="badge neutral">Revoked</span>{{end}}`, 1)
+	const revoke = `<form method="post" action="/badges/{{.ID}}/revoke"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><button class="danger small" type="submit">Revoke</button></form>`
+	return strings.Replace(result, revoke, revoke+`<form method="post" action="/badges/{{.ID}}/replace"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><button class="small" type="submit">Issue replacement</button></form>`, 1)
+}
 
 func (s *Server) web(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" && r.URL.Path != "/users" && r.URL.Path != "/badges" && r.URL.Path != "/audit" && r.URL.Path != "/status" {
@@ -898,6 +905,26 @@ func (s *Server) webRevoke(w http.ResponseWriter, r *http.Request) {
 		s.store.Audit(r.Context(), "badge_revoked", b.BadgeCode, b.Username, "", true, remoteIP(r), "")
 	}
 	http.Redirect(w, r, "/badges", 303)
+}
+func (s *Server) webReplace(w http.ResponseWriter, r *http.Request) {
+	n, err := id(r)
+	old, getErr := s.store.GetBadge(r.Context(), n)
+	if err != nil || getErr != nil || !old.Enabled {
+		http.Redirect(w, r, "/badges", http.StatusSeeOther)
+		return
+	}
+	token, err := badge.GenerateToken()
+	if err != nil {
+		http.Redirect(w, r, "/badges", http.StatusSeeOther)
+		return
+	}
+	replacement, err := s.store.ReplaceBadgePending(r.Context(), old.ID, badge.HashToken(token), "Replacement for "+old.BadgeCode)
+	if err != nil {
+		http.Redirect(w, r, "/badges", http.StatusSeeOther)
+		return
+	}
+	s.store.Audit(r.Context(), "badge_replaced", old.BadgeCode, old.Username, "", true, remoteIP(r), "new_badge="+replacement.BadgeCode)
+	http.Redirect(w, r, "/badges?payload="+badge.Payload(replacement.BadgeCode, token), http.StatusSeeOther)
 }
 func style(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/css")

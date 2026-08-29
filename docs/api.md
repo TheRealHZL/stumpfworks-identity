@@ -39,3 +39,5 @@ The authenticated self-service page also shows at most the latest 20 badge-authe
 `POST /self-service/badges/activate` accepts a complete one-time replacement payload. Activation succeeds only when its token matches, the badge is explicitly pending activation, and its owner matches the signed self-service identity. Revoked or ordinary disabled badges cannot be reactivated through this route.
 
 `POST /self-service/sessions/logout-others` revokes all other server-tracked self-service sessions for the signed identity while preserving the current session. Session records contain a random identifier, username and bounded timestamps, but no AD password or session-cookie value.
+
+The protected badge administration page exposes the same replacement operation at `POST /badges/{id}/replace` with CSRF protection and redirects to the one-time payload display. The previous badge is revoked and the replacement remains pending until owner activation.
